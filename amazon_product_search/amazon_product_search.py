@@ -2,7 +2,7 @@ import requests
 from bs4  import BeautifulSoup
 
 
-def amazon_product_search(productName:str,productType:str="",brand:str="",priceRange:str="")->dict:
+def amazon_product_search(productName:str,productType:str|None=None,brand:str|None=None,priceRange:str|None=None)->dict:
     """
         Get the product lists using product type ,name ,brand and priceRange
         Parameters:
@@ -29,12 +29,12 @@ def amazon_product_search(productName:str,productType:str="",brand:str="",priceR
         'Accept-Language': 'en-US, en;q=0.5',
     };
 
+    if(productName == None): raise Exception("Error prodict Name is required");
     # creating url from given data
     url+="&k="+productName;
-
-    if(productType != ""):url+="&i="+productType;
-    if(brand != ""):url+="&rh=p_89:="+brand;
-    if(priceRange != ""):url+="&rh=p_36:="+priceRange;
+    if(productType):url+="&i="+productType;
+    if(brand):url+="&rh=p_89:="+brand;
+    if(priceRange):url+="&rh=p_36:="+priceRange;
 
     # get request amazon.com
     data = requests.get(url,headers=_HEADER);
@@ -72,4 +72,7 @@ def amazon_product_search(productName:str,productType:str="",brand:str="",priceR
         "images":images,
         "links":links
     }
+
+if __name__ == "__main__":
+    amazon_product_search("iPhone",productType="electronic",brand="Apple",priceRange="80000-100000");
 
