@@ -1,0 +1,35 @@
+name: Publish Python Package
+
+on:
+  push:
+    tags:
+      - 'v*'  # This means it will run on tags that start with 'v'
+  workflow_dispatch:  # Allows manual trigger via GitHub UI
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v2
+
+      - name: Set up Python
+        uses: actions/setup-python@v2
+        with:
+          python-version: '3.12.x'  # Specify the Python version you want to use
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip setuptools wheel
+
+      - name: Build the package
+        run: python setup.py sdist bdist_wheel
+
+      - name: Publish to PyPI
+        env:
+          TWINE_USERNAME: ManojPanda
+          TWINE_PASSWORD: ${{ secrets.PYPI_TOKEN }}
+        run: |
+          pip install twine
+          twine upload dist/*
