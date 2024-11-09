@@ -3,7 +3,8 @@ name: Publish Python Package
 on:
   push:
     tags:
-      - 'v0.1'  # This means it will run on tags that start with 'v'
+      - 'v*'  # This means it will run on tags that start with 'v'
+  workflow_dispatch:  # Allows manual trigger via GitHub UI
 
 jobs:
   publish:
