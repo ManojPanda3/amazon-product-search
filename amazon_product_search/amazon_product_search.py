@@ -33,8 +33,8 @@ def amazon_product_search(productName:str,productType:str|None=None,brand:str|No
     # creating url from given data
     url+="&k="+productName;
     if(productType):url+="&i="+productType;
-    if(brand):url+="&rh=p_89:="+brand;
-    if(priceRange):url+="&rh=p_36:="+priceRange;
+    if(brand):url+="&brand="+brand;
+    if(priceRange):url+="&price="+priceRange;
 
     # get request amazon.com
     data = requests.get(url,headers=_HEADER);
@@ -44,35 +44,50 @@ def amazon_product_search(productName:str,productType:str|None=None,brand:str|No
 
     # extract the datas
     soup = BeautifulSoup(data.content,"html.parser");
+    searchDivs = soup.find_all("div",attrs={
+        "data-component-type":"s-search-result"
+    });
+    datas:list = [];
+    for searchDiv in searchDivs:
+        data = {}
+        # titles
+        if(not searchDiv): continue;
 
-    try:
-        titles = list(map( lambda x:x.find("h2").find("span").string , soup.find_all("div",attrs={
+        title = searchDiv.find("div",attrs={
             "data-cy":"title-recipe",
-        })));
-        links = list(map( lambda x:"https://www.amazon.com"+x.find("a").get("href"), soup.find_all("span",attrs={
-            "data-component-type":"s-product-image",
-        }) ));
-        reviews = list(map(lambda x:x.find("span",attrs={"class":"a-icon-alt"}).string,soup.find_all("div",attrs={
-            "data-cy":"reviews-block"
-        })));
-        prices = list(map(lambda x:x.string,filter(lambda x:x!=None,map(lambda x:x.find("span",attrs={"class":"a-offscreen"}),soup.find_all("div",attrs={
-            "data-cy":"price-recipe"
-        })))));
-        images = soup.find_all("img",attrs={
-            "class":"s-image"
         });
-    except:
-        print("Invelid search query")
-        return {};
+        title = title.find("h2") if title else title;
+        title = title.find("span").string if title else title;
+        data["title"] = title;
 
-    return {
-        "titles":titles,
-        "reviews":reviews,
-        "prices":prices,
-        "images":images,
-        "links":links
-    }
+        # links 
+        link = searchDiv.find("span",attrs={
+            "data-component-type":"s-product-image",
+        });   
+        link = link.find("a").get("href",None) if link else link;
+        data["link"] = link;
+
+        # reviews
+        review = searchDiv.find("div",attrs={
+        "data-cy":"reviews-block"
+    });
+        review = review.find("span",attrs={"class":"a-icon-alt"}) if review else review;
+        review = review.string if review else review;
+        data["review"] = review;
+
+        # prices
+        price = searchDiv.find("div",attrs={"data-cy":"price-recipe"});
+        price = price.find("span",attrs={"class":"a-offscreen"}) if price else price;
+        data["price"] = price;
+
+        # images 
+        image = searchDiv.find("img",attrs={"class":"s-image"})
+        data["image"] = image
+
+        datas.append(data);
+
+    return datas;
 
 if __name__ == "__main__":
-    amazon_product_search("iPhone",productType="electronic",brand="Apple",priceRange="80000-100000");
+    print(amazon_product_search("iPhone",productType="electronic"));
 
