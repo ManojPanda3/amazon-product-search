@@ -2,150 +2,131 @@
 
 ## Overview
 
-Looking for the best deals on Amazon but tired of manually browsing? 🌐 Meet **Amazon Product Search** — your trusty Python library to scrape product details from Amazon with just a few lines of code. Powered by **BeautifulSoup4 (bs4)** and **Requests**, this library helps you gather all the juicy details about products including their titles, prices, reviews, images, and direct links, straight from Amazon's search results. 🎉
+Tired of manually browsing Amazon for the best deals? 🌐 Meet **Amazon Product Search** — your trusty Python library to scrape product details from Amazon's search results with just a few lines of code. Powered by **BeautifulSoup4 (bs4)**, **Requests**, and **multithreading** for speed, this library helps you efficiently gather product titles, prices, reviews, images, and direct links. 🎉
 
-### Key Features:
-- **Product Search**: Search for products by name, brand, type, and price range. 📱💻
-- **Detailed Data**: Scrape titles, prices, reviews, images, and URLs in one go! 🎯
-- **Easy-to-use**: Just import and go, it's like magic! ✨
+### Key Features
+
+- **Product Search:** Search for products by name, type, brand, and price range. 📱💻
+- **Detailed Data:** Scrape titles, prices, reviews, images, and URLs. 🎯
+- **Fast and Efficient:** Uses multithreading to speed up data extraction.
+- **Easy-to-use:** Simple API for quick integration. ✨
 
 ## Setup 🛠️
 
-To get started with Amazon Product Search, follow these simple steps:
+Get started with Amazon Product Search by installing it via PyPI or GitHub.
 
-### 1. Install via GitHub (Recommended for Devs) 🦸‍♂️
+### 1. Install via PyPI (Recommended) 🧑‍💻
 
-Clone the repo and install the library directly:
-
-```bash
-git clone --depth 1 https://github.com/ManojPanda3/amazon-product-search && pip install -e .
-```
-
-You’ll have access to the latest updates and developments! 🚀
-
-### 2. Install via PyPI (For Simplicity) 🧑‍💻
-
-If you just want to get it up and running without any hassle, install the library using `pip` from PyPI:
+The easiest way to install the library is using `pip` from PyPI:
 
 ```bash
-pip install amazon-product-search
+pip install amazon-product-search-v2
 ```
 
-And boom! 🎉 You’re all set!
+This installs the latest stable release. **Note the package name is now `amazon-product-search-v2`**.
+
+### 2. Install via GitHub (For Developers) 🦸‍♂️
+
+If you want the very latest development version (which may have new features or bug fixes, but could also be less stable), clone the repository and install it in editable mode:
+
+```bash
+git clone --depth 1 https://github.com/ManojPanda3/amazon-product-search
+cd amazon-product-search
+pip install -e .
+```
+
+This allows you to modify the code and have the changes immediately reflected without reinstalling.
 
 ## Usage 📚
 
-### Import the Library 🧑‍💻
+### Import the Library
 
-First, import the **`amazon_product_search`** module:
+First, import the `Amazon` class from the `amazon_product_search` module:
 
 ```python
-import amazon_product_search as ams
+from amazon_product_search import Amazon
 ```
 
-### Function: `amazon_product_search()`
+**Important:** Even though the _package_ name on PyPI is `amazon-product-search-v2`, you still import the module as `amazon_product_search`. The code inside the package hasn't changed its import paths.
 
-The core function of the library is **`amazon_product_search()`**. It allows you to search for products and get detailed info all at once. ✨
+### Searching for Products
 
-#### Function Syntax:
+The core functionality is provided by the `Amazon` class.
+
+#### Instantiate the `Amazon` Class
 
 ```python
-ams.amazon_product_search(query, productType=None, brand=None, priceRange=None)
+amazon = Amazon(is_debuging=False)  # Set is_debuging to True for verbose output
 ```
 
-#### Parameters:
-- `productName` (str): The search term (e.g., `"iPhone"`, `"laptop"`).
-- `productType` (str, optional): The type of product (e.g., `"electronic"`).
-- `brand` (str, optional): The brand of the product (e.g., `"Apple"`).
-- `priceRange` (str, optional): The price range in the format `"min_price-max_price"`, e.g., `"80000-100000"`.
-
-#### Example Usage:
+#### Use the `search()` Method
 
 ```python
-import amazon_product_search as ams
+results = amazon.search(productName="iPhone", productType="electronics", brand="Apple", priceRange="80000-100000")
+```
 
-# Search for iPhones by Apple in the 'electronic' category, with a price range of 80,000 to 100,000
-products = ams.amazon_product_search("iPhone", productType="electronic", brand="Apple", priceRange="80000-100000")
+**Parameters:**
 
-# Display the product details
+- `productName` (str, required): The search term (e.g., "iPhone", "laptop").
+- `productType` (str, optional): Filters by product type (e.g., "electronics", "books").
+- `brand` (str, optional): Filters by brand (e.g., "Apple", "Samsung").
+- `priceRange` (str, optional): Filters by price range using the format "min_price-max_price" (e.g., "100-200").
+
+**Returns:**
+
+- `list[dict]`: A list of dictionaries, where each dictionary represents a product and contains the following keys:
+  - `"title"` (str | None): The product title.
+  - `"link"` (str | None): The URL to the product page.
+  - `"review"` (str | None): A string representing the product review (e.g., "4.5 out of 5 stars").
+  - `"price"` (str | None): The product price.
+  - `"image"` (str | None): The URL of the product image.
+
+#### Example
+
+```python
+from amazon_product_search import Amazon
+
+amazon = Amazon()
+products = amazon.search("iPhone", productType="electronics", brand="Apple", priceRange="80000-100000")
+
 for product in products:
     print(f"Title: {product['title']}")
     print(f"Price: {product['price']}")
-    print(f"Reviews: {product['reviews']}")
-    print(f"Image URL: {product['image_url']}")
-    print(f"Product Link: {product['url']}")
+    print(f"Review: {product['review']}")
+    print(f"Image: {product['image']}")
+    print(f"Link: {product['link']}")
     print("-" * 40)
 ```
 
 ## How It Works 🔍
 
-This library works by making HTTP requests to Amazon's search results pages and scraping the HTML content using **BeautifulSoup4**. 🕵️‍♂️
+This library works by:
 
-It extracts the following information:
-- **Title**: The product’s name (or title) is grabbed from the search card.
-- **Price**: Extracted from the product’s price section 💸.
-- **Reviews**: Number of reviews scraped from the product's rating section.
-- **Image URL**: The source of the product image for your viewing pleasure 📸.
-- **Product Link**: The direct Amazon link to the product page, so you can buy it (or just admire it) 🛒.
+1. **Constructing a Search URL:** It builds a URL for Amazon's search results page based on the provided search parameters.
+2. **Making an HTTP Request:** It sends an HTTP GET request to the Amazon search URL using the `requests` library. It includes headers to mimic a web browser.
+3. **Parsing the HTML:** It uses `BeautifulSoup4` to parse the HTML response and extract the relevant product information from the search result elements.
+4. **Multithreading:** It uses `concurrent.futures.ThreadPoolExecutor` to process multiple search result elements concurrently, significantly speeding up the data extraction.
+5. **Returning Data:** It returns the extracted data as a list of dictionaries.
 
-## Example:
+## Important Notes ⚠️
 
-Here’s a real-world example:
-
-```python
-import amazon_product_search as ams
-
-# Search for Apple iPhones in the 'electronic' category, in the price range of 80,000 to 100,000
-products = ams.amazon_product_search("iPhone", productType="electronic", brand="Apple", priceRange="80000-100000")
-
-# Loop through the results and print the details
-for product in products:
-    print(f"Title: {product['title'][0]}")
-    print(f"Price: {product['price'][0]}")
-    print(f"Reviews: {product['reviews'][0]}")
-    print(f"Image URL: {product['image_url'][0]}")
-    print(f"Product Link: {product['url'][0]}")
-    print("-" * 40)
-```
-
-### Sample Output 🎯:
-
-```plaintext
-Title: Apple iPhone 13 (128GB) - Blue
-Price: ₹89,999
-Reviews: 10,000+ ratings
-Image URL: https://example.com/image.jpg
-Product Link: https://www.amazon.in/dp/B09V4G5SP1
-----------------------------------------
-Title: Apple iPhone 12 (64GB) - Black
-Price: ₹74,999
-Reviews: 5,000+ ratings
-Image URL: https://example.com/image2.jpg
-Product Link: https://www.amazon.in/dp/B08L6LQ5G9
-----------------------------------------
-```
-
-## Notes ⚠️
-
-- **Be Nice to Amazon!** 🌱 Scraping can be heavy on resources, so use it responsibly. Amazon might block your IP if you’re scraping too frequently. 🛑
-- **Legal Stuff**: Scraping Amazon might go against their [Terms of Service](https://www.amazon.com/gp/help/customer/display.html?nodeId=508088). Use this tool for **personal and educational purposes only**. 🔒
-- **Amazon Changes**: If Amazon updates its website structure, scraping may break. Let’s hope they don’t change things too much! 🤞
+- **Rate Limiting:** Amazon may rate-limit or block your IP address if you make too many requests in a short period. Use this library responsibly. Consider adding delays or using proxies if you need to scrape a large amount of data. The library includes a `timeout` in the request to help prevent hanging.
+- **Terms of Service:** Scraping may be against Amazon's Terms of Service. Use this tool for **personal and educational purposes only**, and be aware of the potential legal and ethical implications.
+- **Website Changes:** Amazon frequently updates its website structure. If the scraping stops working, the HTML parsing logic may need to be adjusted.
+- **Error Handling:** The library includes basic error handling (e.g., for network errors), but you may need to add more robust error handling for production use.
 
 ## Troubleshooting 🛠️
 
-1. **Missing Data?** 🧐 If the data isn’t coming through, check if Amazon has changed their page structure or if you’ve missed a parameter in the function.
-2. **Blocked by Amazon?** 🕵️‍♂️ Try adding a delay between requests or use a proxy to avoid rate-limiting.
+1. **`ValueError: Error product Name is required`:** You must provide a `productName` when calling the `search()` method.
+2. **`Exception: Error while geting data from Amazon`:** This indicates a problem fetching data from Amazon. It could be a network issue, a problem with your request, or Amazon blocking your request. Enable debugging (`is_debuging=True`) for more details.
+3. **Empty Results:** If you get an empty list, it could be that no products matched your search criteria, or that Amazon's HTML structure has changed, and the parsing logic needs to be updated.
+4. **Missing Data (None Values):** If some fields (like `review` or `price`) are `None`, it means the library couldn't find that specific data for that product on the page. This is normal, as Amazon's page structure can vary.
+5. **`ModuleNotFoundError: No module named 'amazon_product_search'`:** Make sure you've installed the package correctly using `pip install amazon-product-search-v2`. If you installed from GitHub, make sure you're in the correct virtual environment and that you installed with `pip install -e .`.
 
 ## Contributing 🤝
 
-Got ideas or improvements? 🎨 Open a pull request or create an issue on GitHub. Let’s make this even better! 🚀
+Contributions are welcome! If you find a bug, have a feature request, or want to improve the code, please open an issue or submit a pull request on GitHub.
 
 ## License 📜
 
-This project is licensed under the **MIT License** - see the [LICENSE](LICENSE) file for details.
-
----
-
-**Happy Scraping!** 🕸️✨
-
-
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.

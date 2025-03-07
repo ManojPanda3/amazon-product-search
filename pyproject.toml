@@ -1,0 +1,38 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "amazon_product_search_v2"
+version = "0.1.1"
+description = "A library to search products on Amazon without using the PA API"
+readme = "README.md"
+authors = [
+    { name = "Manojpanda", email = "manojpandawork@gmail.com" }
+]
+license = { file = "LICENSE" }
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Intended Audience :: Developers",
+  "License :: OSI Approved :: MIT License",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.7",
+  "Programming Language :: Python :: 3.8",
+  "Programming Language :: Python :: 3.9",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Topic :: Software Development :: Libraries :: Python Modules",
+]
+keywords = ["amazon", "product", "search", "scraping", "web scraping"]
+requires-python = ">=3.7"
+dependencies = [
+    "beautifulsoup4==4.12.3",
+    "requests==2.32.3",
+    "lxml==5.3.1"
+]
+
+
+[project.urls]
+Homepage = "https://github.com/ManojPanda3/amazon-product-search"

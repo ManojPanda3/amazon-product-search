@@ -1,1 +1,1 @@
-from .amazon_product_search import amazon_product_search;
+from .amazon_product_search import Amazon, AmazonProduct
