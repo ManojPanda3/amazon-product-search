@@ -6,30 +6,36 @@ on:
       - 'v*'  # This means it will run on tags that start with 'v'
   workflow_dispatch:  # Allows manual trigger via GitHub UI
 
+permissions:
+  contents: read
+  id-token: write  # Required for Trusted Publishing (OIDC) to PyPI
+
 jobs:
   publish:
     runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/p/amazon-product-search-v2
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v2
+        uses: actions/checkout@v4
 
       - name: Set up Python
-        uses: actions/setup-python@v2
+        uses: actions/setup-python@v5
         with:
-          python-version: '3.12.x'  # Specify the Python version you want to use
+          python-version: '3.12'
+          cache: pip
 
-      - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip setuptools wheel
+      - name: Install build backend
+        run: python -m pip install --upgrade pip build
 
       - name: Build the package
-        run: python setup.py sdist bdist_wheel
+        run: python -m build  # PEP 517 — builds sdist + wheel from pyproject.toml
 
       - name: Publish to PyPI
-        env:
-          TWINE_USERNAME: ManojPanda
-          TWINE_PASSWORD: ${{ secrets.PYPI_TOKEN }}
-        run: |
-          pip install twine
-          twine upload dist/*
+        # Trusted Publishing (OIDC) preferred — no secrets needed if PyPI project is
+        # configured with a Trusted Publisher (https://pypi.org/manage/account/publishing/).
+        # Fallback: set PYPI_API_TOKEN secret (API token, username must be __token__) and the
+        # action will use it automatically.
+        uses: pypa/gh-action-pypi-publish@release/v1
