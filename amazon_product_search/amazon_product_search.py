@@ -1,9 +1,15 @@
+from __future__ import annotations
+
+import re
 import requests
 from bs4 import BeautifulSoup, element
-from dataclasses import dataclass
+from bs4.filter import SoupStrainer
+from dataclasses import dataclass, field
 from urllib.parse import ParseResult, urlparse, urlunparse, urlencode
 import concurrent.futures
 import logging
+
+__version__ = "0.1.2"
 
 MAX_WORKERS = 4
 
@@ -50,6 +56,31 @@ class AmazonProduct:
         return str(self.get())
 
 
+@dataclass
+class AmazonResult:
+    products: list[AmazonProduct] = field(default_factory=list)
+    current_page: int = 1
+    total_pages: int = 1
+
+    # Backward-compat: allow `for p in result` and `len(result)` / `result[i]`
+    def __iter__(self):
+        return iter(self.products)
+
+    def __len__(self):
+        return len(self.products)
+
+    def __getitem__(self, idx):
+        return self.products[idx]
+
+    def get(self) -> dict:
+        """Dict representation for JSON serialization."""
+        return {
+            "products": [p.get() for p in self.products],
+            "current_page": self.current_page,
+            "total_pages": self.total_pages,
+        }
+
+
 class Amazon:
     def __init__(self, is_debuging: bool = False, workers: int = MAX_WORKERS) -> None:
         self.base_url: ParseResult = urlparse("https://www.amazon.com/s")
@@ -61,6 +92,19 @@ class Amazon:
         self.is_debuging = is_debuging
         self.logger = logging.getLogger(__name__)
         self.logger.setLevel(logging.DEBUG if is_debuging else logging.ERROR)
+        # Reuse TCP connection across searches — avoids TLS handshake per request
+        self.session = requests.Session()
+        self.session.headers.update(self._HEADER)
+
+    def close(self) -> None:
+        """Close the underlying requests Session."""
+        self.session.close()
+
+    def __enter__(self) -> "Amazon":
+        return self
+
+    def __exit__(self, *_exc) -> None:
+        self.close()
 
     def search(
         self,
@@ -68,7 +112,8 @@ class Amazon:
         productType: str = "",
         brand: str = "",
         priceRange: str = "",
-    ) -> list[AmazonProduct]:
+        page: int = 0,
+    ) -> AmazonResult:
         """
         Searches for products on Amazon based on the provided criteria.
 
@@ -77,10 +122,10 @@ class Amazon:
             productType (str ): The type of product (e.g., "electronics").  Optional.
             brand (str ): The brand of the product. Optional.
             priceRange (str ): The price range of the product.  Optional.
+            page (int): Page number (1-indexed). 0 / 1 both mean first page. Optional.
 
         Returns:
-            list[dict]: A list of dictionaries, where each dictionary represents a product
-                and contains its title, link, review, price, and image URL.
+            AmazonResult: Products plus pagination info (current_page, total_pages).
 
         Raises:
             ValueError: If productName is empty.
@@ -89,11 +134,15 @@ class Amazon:
         if productName.strip() == "":
             raise ValueError("Error product Name is required")
 
+        # Normalize page: 0 or 1 -> no page param (first page); >1 -> include
+        page_param = str(page) if page and page > 1 else None
+        # Also handle page == 1 explicitly if caller passes 1 — treat as first page without param
         clean_params = {
             "k": productName,
             "i": productType.strip() if productType.strip() != "" else None,
             "brand": brand.strip() if brand.strip() != "" else None,
             "price": priceRange.strip() if priceRange.strip() != "" else None,
+            "page": page_param,
         }
         query_params: str = urlencode(
             {k: v for k, v in clean_params.items() if v is not None}
@@ -101,11 +150,17 @@ class Amazon:
         url = urlunparse(self.base_url._replace(query=query_params))
 
         responseHtml = self.__amazon_request(url)
-        if responseHtml is None:
+        if not responseHtml:
             raise ValueError("Error while geting data from Amazon")
 
         products = self.__process_html(responseHtml)
-        return products
+        current_page, total_pages = self.__parse_pagination(
+            responseHtml, requested_page=page
+        )
+
+        return AmazonResult(
+            products=products, current_page=current_page, total_pages=total_pages
+        )
 
     def __amazon_request(self, url: str) -> str:
         """
@@ -115,21 +170,17 @@ class Amazon:
             url (str): The URL to request.
 
         Returns:
-            str | None: The response content as bytes if the request is successful,
-                None otherwise.
+            str: The response content as text if successful, empty string otherwise.
         """
-        data = ""
         try:
-            response = requests.get(url, headers=self._HEADER, timeout=10)
+            response = self.session.get(url, timeout=10)
             if response.status_code != 200:
                 self.logger.error(f"Error while geting {url}:\t{response.content}")
-                return data
-
-            data = response.text
-        except requests.HTTPError as error:
+                return ""
+            return response.text
+        except requests.RequestException as error:
             self.logger.error(f"Error while fetching amazon url[{url}]\nError:{error}")
-
-        return data
+            return ""
 
     def __parse_html(self, html: str) -> list[element.Tag]:
         """
@@ -141,11 +192,95 @@ class Amazon:
         Returns:
             list[element.Tag]: A list of BeautifulSoup Tag objects, each representing a product search result.
         """
-        soup = BeautifulSoup(html, "lxml")
+        strainer = SoupStrainer("div", attrs={"data-component-type": "s-search-result"})
+        soup = BeautifulSoup(html, "lxml", parse_only=strainer)
         searchDivs = soup.find_all(
             "div", attrs={"data-component-type": "s-search-result"}
         )
         return searchDivs
+
+    def __parse_pagination(self, html: str, requested_page: int = 0) -> tuple[int, int]:
+        """
+        Extract pagination info anchored on data-csa-c-content-id="pagination-button".
+
+        Amazon renders pagination inside:
+          <div data-csa-c-content-id="pagination-button" ...>
+            <span class="s-pagination-selected">1</span>
+            <a class="s-pagination-button">2</a>
+            ...
+            <span class="s-pagination-disabled">260</span>
+          </div>
+
+        Args:
+            html: Full response HTML.
+            requested_page: Page requested in `search()` (fallback if markup missing).
+
+        Returns:
+            (current_page, total_pages)
+        """
+        fallback = requested_page if requested_page and requested_page > 0 else 1
+        try:
+            # Try strainer first — only parses the pagination widget (faster on large pages)
+            strainer = SoupStrainer(
+                "div", attrs={"data-csa-c-content-id": "pagination-button"}
+            )
+            soup = BeautifulSoup(html, "lxml", parse_only=strainer)
+            pagination_div = soup.find(
+                "div", attrs={"data-csa-c-content-id": "pagination-button"}
+            )
+            # Strainer may yield empty soup if lxml nesting is unexpected — fallback to full parse
+            if pagination_div is None:
+                soup = BeautifulSoup(html, "lxml")
+                pagination_div = soup.find(
+                    "div", attrs={"data-csa-c-content-id": "pagination-button"}
+                )
+            if pagination_div is None:
+                return (fallback, fallback if fallback == 1 else fallback)
+
+            # Current page — the selected, aria-current page span
+            current = fallback
+            selected = pagination_div.find("span", class_="s-pagination-selected")
+            if selected:
+                txt = selected.get_text(strip=True)
+                if txt.isdigit():
+                    current = int(txt)
+                else:
+                    # Sometimes contains whitespace; try regex
+                    m = re.search(r"\d+", txt)
+                    if m:
+                        current = int(m.group())
+            elif requested_page:
+                current = requested_page
+
+            # Total pages — max numeric s-pagination-item (covers <a> buttons and disabled "260")
+            total = current
+            # Grab every pagination item (both <a> and <span>) inside the widget
+            items = pagination_div.find_all(
+                ["a", "span"],
+                class_=re.compile(r"s-pagination-item"),
+            )
+            nums: list[int] = []
+            for el in items:
+                txt = el.get_text(strip=True)
+                if txt.isdigit():
+                    nums.append(int(txt))
+                else:
+                    # Handle cases like "(260)" — not typical for pagination but safe
+                    m = re.search(r"\d+", txt)
+                    if m and txt.strip("() ").isdigit() is False:
+                        # Only accept pure numeric after stripping; avoid "Next"/"Previous"
+                        pass
+            if nums:
+                total = max(nums)
+            # If pagination shows ellipsis but last page is disabled span without digit extraction, use max
+            if total < current:
+                total = current
+            if total < 1:
+                total = 1
+            return (current, total)
+        except Exception as e:
+            self.logger.debug(f"Pagination parse failed: {e}")
+            return (fallback, fallback)
 
     def __process_html(self, html: str) -> list[AmazonProduct]:
         """
@@ -157,8 +292,11 @@ class Amazon:
         Returns:
             list[AmazonProduct]: A list of AmazonProduct objects.
         """
-        products: list[AmazonProduct] = []
         divs = self.__parse_html(html)
+        if not divs:
+            return []
+
+        products: list[AmazonProduct] = []
 
         with concurrent.futures.ThreadPoolExecutor(
             max_workers=self.workers
@@ -209,16 +347,14 @@ class Amazon:
         Returns:
             str | None: The product title, or None if not found.
         """
-        title = div.find(
-            "div",
-            attrs={
-                "data-cy": "title-recipe",
-            },
-        )
-        title = title.find("h2") if title else None
-        return (
-            title.find("span").string if title and title.find("span") else None
-        )  # More robust check
+        title = div.find("div", attrs={"data-cy": "title-recipe"})
+        if not title:
+            return None
+        h2 = title.find("h2")
+        if not h2:
+            return None
+        span = h2.find("span")
+        return span.string if span else None
 
     def __get_link(self, div: element.Tag) -> str | None:
         """
@@ -246,33 +382,33 @@ class Amazon:
 
     def __get_reviews(self, div: element.Tag) -> dict | None:
         review_div = div.find("div", attrs={"data-cy": "reviews-block"})
-        if review_div:
-            reviews = {}
-            review_span = review_div.find(
-                "span",
-                attrs={"class": "a-size-small a-color-base", "aria-hidden": "true"},
-            )
-            reviews_number_span = review_div.find(
-                "span", attrs={"data-component-type": "s-client-side-analytics"}
-            )
-            if reviews_number_span:
-                # The inner span with aria-hidden="true" contains the count text
-                inner_span = reviews_number_span.find(
-                    "span", attrs={"aria-hidden": "true"}
+        if not review_div:
+            return None
+        reviews: dict = {}
+        review_span = review_div.find(
+            "span",
+            attrs={"class": "a-size-small a-color-base", "aria-hidden": "true"},
+        )
+        if review_span and review_span.string:
+            reviews["review"] = review_span.string
+
+        reviews_number_span = review_div.find(
+            "span", attrs={"data-component-type": "s-client-side-analytics"}
+        )
+        if reviews_number_span:
+            inner_span = reviews_number_span.find("span", attrs={"aria-hidden": "true"})
+            if inner_span and inner_span.string:
+                count_text = inner_span.string.strip().replace(",", "")
+                # strip surrounding parens "(123)" -> "123", guard short strings
+                reviews["reviews_number"] = (
+                    count_text[1:-1] if len(count_text) >= 2 else count_text
                 )
-                if inner_span and inner_span.string:
-                    count_text = inner_span.string.strip().replace(",", "")
-                    reviews["reviews_number"] = count_text[1:-1]
-                else:
-                    reviews["reviews_number"] = None
             else:
                 reviews["reviews_number"] = None
+        else:
+            reviews["reviews_number"] = None
 
-            if review_span:
-                reviews["review"] = review_span.string
-
-            return reviews
-        return None
+        return reviews
 
     def __get_price(self, div: element.Tag) -> dict | None:
         """
@@ -282,27 +418,30 @@ class Amazon:
             div (element.Tag): A BeautifulSoup Tag representing a product.
 
         Returns:
-            str | None: The product price, or None if not found.
+            dict | None: {"currency": str, "price": str} or None if not found.
         """
-        price_div = div.find("div", attrs={"data-cy": "price-recipe"})
-
-        if price_div:
-            price_span = price_div.find("span", attrs={"class": "a-offscreen"})
+        for attr in ("price-recipe", "secondary-offer-recipe"):
+            price_div = div.find("div", attrs={"data-cy": attr})
+            if not price_div:
+                continue
+            # primary recipe uses a-offscreen, secondary uses a-color-base
+            cls = "a-offscreen" if attr == "price-recipe" else "a-color-base"
+            price_span = price_div.find("span", attrs={"class": cls})
             if price_span and price_span.string:
                 price = price_span.string.strip()
-                p = price.split("\u00a0")
-                return {"currency": p[0], "price": p[1]}
-
-        price_div = div.find("div", attrs={"data-cy": "secondary-offer-recipe"})
-        if price_div:
-            price_span = price_div.find(
-                "span",
-                attrs={"class": "a-color-base"},
-            )
+                if "\u00a0" in price:
+                    currency, amount = price.split("\u00a0", 1)
+                    return {"currency": currency, "price": amount}
+                # fallback: no NBSP, return whole string as price
+                return {"currency": "", "price": price}
+            # secondary-offer may have no .string but text (e.g. nested)
             if price_span:
-                price = price_span.string.strip()
-                p = price.split("\u00a0")
-                return {"currency": p[0], "price": p[1]}
+                text = price_span.get_text(strip=True)
+                if text:
+                    if "\u00a0" in text:
+                        currency, amount = text.split("\u00a0", 1)
+                        return {"currency": currency, "price": amount}
+                    return {"currency": "", "price": text}
 
         return None
 
@@ -317,12 +456,25 @@ class Amazon:
             str | None: The product image URL, or None if not found.
         """
         image = div.find("img", attrs={"class": "s-image"})
-        return image.get("src") if image else None
+        if not image:
+            return None
+        src = image.get("src")
+        return str(src) if src else None
 
 
 if __name__ == "__main__":
     import json
 
     amazon = Amazon(False)
-    results = amazon.search("mac", productType="electronics")
-    print(json.dumps([i.get() for i in results], indent=2))
+    result = amazon.search("mac", productType="electronics")
+    # AmazonResult is iterable (for len/for) but holds pagination too
+    print(
+        json.dumps(
+            {
+                "products": [p.get() for p in result.products],
+                "current_page": result.current_page,
+                "total_pages": result.total_pages,
+            },
+            indent=2,
+        )
+    )

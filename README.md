@@ -7,126 +7,186 @@ Tired of manually browsing Amazon for the best deals? 🌐 Meet **Amazon Product
 ### Key Features
 
 - **Product Search:** Search for products by name, type, brand, and price range. 📱💻
-- **Detailed Data:** Scrape titles, prices, reviews, images, and URLs. 🎯
-- **Fast and Efficient:** Uses multithreading to speed up data extraction.
-- **Easy-to-use:** Simple API for quick integration. ✨
+- **Detailed Data:** Scrape titles, prices (+currency), reviews (+count), images, and URLs. 🎯
+- **Pagination:** Navigate Amazon pages via `page` param and get `current_page` / `total_pages` from `data-csa-c-content-id="pagination-button"`. 📄
+- **Fast and Efficient:** Session reuse (keep-alive), `SoupStrainer` partial parsing, and `ThreadPoolExecutor` for extraction.
+- **Easy-to-use:** Simple API + context-manager + backward-compatible iteration. ✨
+- **Lightweight & Compatible:** Python 3.7–3.14, relaxed deps (`beautifulsoup4>=4.11`, `requests>=2.28`, `lxml>=4.9`). No heavy frameworks.
 
 ## Setup 🛠️
 
-Get started with Amazon Product Search by installing it via PyPI or GitHub.
-
 ### 1. Install via PyPI (Recommended) 🧑‍💻
-
-The easiest way to install the library is using `pip` from PyPI:
 
 ```bash
 pip install amazon-product-search-v2
 ```
 
-This installs the latest stable release. **Note the package name is now `amazon-product-search-v2`**.
+Installs the latest stable release. **Package name on PyPI is `amazon-product-search-v2`**.
 
 ### 2. Install via GitHub (For Developers) 🦸‍♂️
-
-If you want the very latest development version (which may have new features or bug fixes, but could also be less stable), clone the repository and install it in editable mode:
 
 ```bash
 git clone --depth 1 https://github.com/ManojPanda3/amazon-product-search
 cd amazon-product-search
 pip install -e .
+# or with venv: python -m pip install -e .
 ```
-
-This allows you to modify the code and have the changes immediately reflected without reinstalling.
 
 ## Usage 📚
 
-### Import the Library
-
-First, import the `Amazon` class from the `amazon_product_search` module:
+### Import
 
 ```python
-from amazon_product_search import Amazon
+from amazon_product_search import Amazon, AmazonProduct, AmazonResult
+# Package is amazon-product-search-v2 on PyPI, but import stays amazon_product_search
 ```
 
-**Important:** Even though the _package_ name on PyPI is `amazon-product-search-v2`, you still import the module as `amazon_product_search`. The code inside the package hasn't changed its import paths.
-
-### Searching for Products
-
-The core functionality is provided by the `Amazon` class.
-
-#### Instantiate the `Amazon` Class
-
-```python
-amazon = Amazon(is_debuging=False)  # Set is_debuging to True for verbose output
-```
-
-#### Use the `search()` Method
-
-```python
-results = amazon.search(productName="iPhone", productType="electronics", brand="Apple", priceRange="80000-100000")
-```
-
-**Parameters:**
-
-- `productName` (str, required): The search term (e.g., "iPhone", "laptop").
-- `productType` (str, optional): Filters by product type (e.g., "electronics", "books").
-- `brand` (str, optional): Filters by brand (e.g., "Apple", "Samsung").
-- `priceRange` (str, optional): Filters by price range using the format "min_price-max_price" (e.g., "100-200").
-
-**Returns:**
-
-- `list[dict]`: A list of dictionaries, where each dictionary represents a product and contains the following keys:
-  - `"title"` (str | None): The product title.
-  - `"link"` (str | None): The URL to the product page.
-  - `"review"` (str | None): A string representing the product review (e.g., "4.5 out of 5 stars").
-  - `"price"` (str | None): The product price.
-  - `"image"` (str | None): The URL of the product image.
-
-#### Example
+### Basic Search
 
 ```python
 from amazon_product_search import Amazon
 
+# Session is reused across searches (keep-alive). Use as context manager to auto-close.
+with Amazon() as amazon:
+    result = amazon.search("thinkpad", productType="electronics", page=1)
+    # or: amazon = Amazon(); result = amazon.search(...); amazon.close()
+
+print(result.current_page, "/", result.total_pages)
+for prod in result.products:
+    print(prod.title, prod.price, prod.currency)
+    print(prod.get())  # dict with title/link/review/review_numbers/currency/price/image
+```
+
+Or one-off:
+
+```python
+amazon = Amazon(is_debuging=False, workers=4)
+result = amazon.search(productName="iPhone", productType="electronics", brand="Apple", priceRange="80000-100000", page=2)
+# result is AmazonResult — also iterable/len-compatible
+print(len(result))          # == len(result.products)
+for product in result:      # iterates products directly
+    print(product.get())
+```
+
+### Parameters for `search()`
+
+- `productName` (str, **required**): Search term (e.g. `"thinkpad"`, `"laptop"`).
+- `productType` (str, optional): `i` filter (e.g. `"electronics"`, `"books"`).
+- `brand` (str, optional): Brand filter.
+- `priceRange` (str, optional): `"min-max"` (e.g. `"100-200"`).
+- `page` (int, optional, default `0`): **New in v0.1.2** — 1-indexed page. `0` or `1` = first page (no `page` param sent), `2` → `?page=2`.
+
+### Returns
+
+`AmazonResult` dataclass:
+
+```python
+@dataclass
+class AmazonResult:
+    products: list[AmazonProduct]
+    current_page: int
+    total_pages: int
+    def get() -> dict: ...  # {products: [...], current_page, total_pages}
+```
+
+Each `AmazonProduct`:
+
+```python
+@dataclass
+class AmazonProduct:
+    title: str | None
+    link: str | None          # https://www.amazon.com/dp/...
+    review: str | None        # "4.5 out of 5 stars"
+    review_numbers: str | None # "1234" (parentheses stripped)
+    price: str | None         # "12.99"
+    currency: str | None      # "$" / "₹" etc. (split on \u00a0)
+    image: str | None
+    def get() -> dict: ...
+```
+
+Backward compat: `for p in result`, `len(result)`, `result[i]` all proxy to `result.products`.
+
+### Examples
+
+#### Paginated search (new syntax)
+
+```python
+from amazon_product_search import Amazon
+import json
+
+with Amazon() as amazon:
+    # Page 1
+    r1 = amazon.search("thinkpad", productType="electronics", page=1)
+    print(f"Page {r1.current_page} of {r1.total_pages} — {len(r1)} products")
+    # Page 2
+    r2 = amazon.search("thinkpad", productType="electronics", page=2)
+    print(json.dumps(r2.get(), indent=2))
+```
+
+#### Iterate all pages
+
+```python
 amazon = Amazon()
-products = amazon.search("iPhone", productType="electronics", brand="Apple", priceRange="80000-100000")
+page = 1
+all_products = []
+while True:
+    res = amazon.search("laptop", page=page)
+    all_products.extend(res.products)
+    if res.current_page >= res.total_pages:
+        break
+    page += 1
+print(f"Collected {len(all_products)} across {res.total_pages} pages")
+amazon.close()
+```
 
-for product in products:
-    print(f"Title: {product['title']}")
-    print(f"Price: {product['price']}")
-    print(f"Review: {product['review']}")
-    print(f"Image: {product['image']}")
-    print(f"Link: {product['link']}")
+#### Old-style loop (still works)
+
+```python
+res = amazon.search("iPhone")
+for product in res:  # or res.products
+    d = product.get()
+    print(f"Title: {d['title']}")
+    print(f"Price: {d['currency']}{d['price']}")
+    print(f"Review: {d['review']} ({d['review_numbers']})")
+    print(f"Link: {d['link']}")
     print("-" * 40)
 ```
 
 ## How It Works 🔍
 
-This library works by:
+1. **URL building:** `urllib.parse.urlencode` safely encodes `k`, `i`, `brand`, `price`, `page`.
+2. **Request:** `requests.Session` reuse (keep-alive, header persistence), 10s timeout, `RequestException` handling, `networkidle` not needed.
+3. **Parse products:** `SoupStrainer("div", {"data-component-type":"s-search-result"})` + `lxml` — only product divs are parsed.
+4. **Parse pagination:** `SoupStrainer("div", {"data-csa-c-content-id":"pagination-button"})` → reads `span.s-pagination-selected` (current) and max `a/span.s-pagination-item` numeric (total, e.g. `260`).
+5. **Extract:** `ThreadPoolExecutor(max_workers=4)` concurrently runs `__extract_data` (title/link/review/price/image).
+6. **Return:** `AmazonResult(products, current_page, total_pages)`.
 
-1. **Constructing a Search URL:** It builds a URL for Amazon's search results page based on the provided search parameters.
-2. **Making an HTTP Request:** It sends an HTTP GET request to the Amazon search URL using the `requests` library. It includes headers to mimic a web browser.
-3. **Parsing the HTML:** It uses `BeautifulSoup4` to parse the HTML response and extract the relevant product information from the search result elements.
-4. **Multithreading:** It uses `concurrent.futures.ThreadPoolExecutor` to process multiple search result elements concurrently, significantly speeding up the data extraction.
-5. **Returning Data:** It returns the extracted data as a list of dictionaries.
+## What's New in v0.1.2
+
+- **Pagination:** `Amazon.search(..., page=N)` + `AmazonResult.current_page / total_pages` via `data-csa-c-content-id="pagination-button"`.
+- **Performance:** `requests.Session` keep-alive, `SoupStrainer` partial parsing, early-exit on empty results, cached `find()` in `__get_title`.
+- **Robustness:** Broader `RequestException` catch, NBSP-safe price split, `image.get("src")` type-safe, `review_numbers` paren-stripping.
+- **Compatibility & Lightweight:** `from __future__ import annotations` for Python 3.7–3.14; deps relaxed to `beautifulsoup4>=4.11`, `requests>=2.28`, `lxml>=4.9` (was pinned `==`).
+- **DX:** `AmazonResult` iterable/len/indexable, `.get()` dict, `Amazon` context manager (`with Amazon() as a:` + `close()`), version bump 0.1.1→0.1.2.
 
 ## Important Notes ⚠️
 
-- **Rate Limiting:** Amazon may rate-limit or block your IP address if you make too many requests in a short period. Use this library responsibly. Consider adding delays or using proxies if you need to scrape a large amount of data. The library includes a `timeout` in the request to help prevent hanging.
-- **Terms of Service:** Scraping may be against Amazon's Terms of Service. Use this tool for **personal and educational purposes only**, and be aware of the potential legal and ethical implications.
-- **Website Changes:** Amazon frequently updates its website structure. If the scraping stops working, the HTML parsing logic may need to be adjusted.
-- **Error Handling:** The library includes basic error handling (e.g., for network errors), but you may need to add more robust error handling for production use.
+- **Rate Limiting:** Amazon may block frequent requests. Add delays / proxies for bulk scraping.
+- **ToS:** Scraping may violate Amazon ToS — personal/educational use only.
+- **Site Changes:** Selectors (`data-cy="title-recipe"`, `data-component-type="s-product-image"`, etc.) may need updates if Amazon changes markup.
 
 ## Troubleshooting 🛠️
 
-1. **`ValueError: Error product Name is required`:** You must provide a `productName` when calling the `search()` method.
-2. **`Exception: Error while geting data from Amazon`:** This indicates a problem fetching data from Amazon. It could be a network issue, a problem with your request, or Amazon blocking your request. Enable debugging (`is_debuging=True`) for more details.
-3. **Empty Results:** If you get an empty list, it could be that no products matched your search criteria, or that Amazon's HTML structure has changed, and the parsing logic needs to be updated.
-4. **Missing Data (None Values):** If some fields (like `review` or `price`) are `None`, it means the library couldn't find that specific data for that product on the page. This is normal, as Amazon's page structure can vary.
-5. **`ModuleNotFoundError: No module named 'amazon_product_search'`:** Make sure you've installed the package correctly using `pip install amazon-product-search-v2`. If you installed from GitHub, make sure you're in the correct virtual environment and that you installed with `pip install -e .`.
+1. `ValueError: Error product Name is required` — provide `productName`.
+2. `ValueError: Error while geting data from Amazon` — network/blocked; try `Amazon(is_debuging=True)` for logs.
+3. Empty `products` — no match or HTML changed; check pagination (`total_pages`) and try different `page`.
+4. `None` fields — normal (Amazon varies per product).
+5. `ModuleNotFoundError: No module named 'amazon_product_search'` — `pip install amazon-product-search-v2` in correct venv.
 
 ## Contributing 🤝
 
-Contributions are welcome! If you find a bug, have a feature request, or want to improve the code, please open an issue or submit a pull request on GitHub.
+PRs welcome! Open an issue or submit a pull request.
 
 ## License 📜
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+MIT — see [LICENSE](LICENSE).
