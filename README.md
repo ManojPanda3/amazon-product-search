@@ -96,9 +96,9 @@ Each `AmazonProduct`:
 class AmazonProduct:
     title: str | None
     link: str | None          # https://www.amazon.com/dp/...
-    review: str | None        # "4.5 out of 5 stars"
-    review_numbers: str | None # "1234" (parentheses stripped)
-    price: str | None         # "12.99"
+    review: str | None        # "4.5 out of 5 stars" (None when missing)
+    review_numbers: int | None # 1234 (parentheses stripped; k/m/b suffixes converted)
+    price: float | None        # 12.99 (commas stripped)
     currency: str | None      # "$" / "₹" etc. (split on \u00a0)
     image: str | None
     def get() -> dict: ...
@@ -158,8 +158,14 @@ for product in res:  # or res.products
 2. **Request:** `requests.Session` reuse (keep-alive, header persistence), 10s timeout, `RequestException` handling, `networkidle` not needed.
 3. **Parse products:** `SoupStrainer("div", {"data-component-type":"s-search-result"})` + `lxml` — only product divs are parsed.
 4. **Parse pagination:** `SoupStrainer("div", {"data-csa-c-content-id":"pagination-button"})` → reads `span.s-pagination-selected` (current) and max `a/span.s-pagination-item` numeric (total, e.g. `260`).
-5. **Extract:** `ThreadPoolExecutor(max_workers=4)` concurrently runs `__extract_data` (title/link/review/price/image).
+5. **Extract:** `ThreadPoolExecutor(max_workers=workers)` (`workers` defaults to `(os.cpu_count() or 4) // 2`) concurrently runs `__extract_data` (title/link/review/price/image).
 6. **Return:** `AmazonResult(products, current_page, total_pages)`.
+
+## Unreleased (unversioned, in working tree)
+
+- **Typed fields:** `price` is now `float | None` (commas stripped, `0.0` fallback — never raises) and `review_numbers` is `int | None` (`k`/`m`/`b` suffixes converted, e.g. `"1.2K"` → `1200`; missing count → `0`).
+- **Workers:** default is now `(os.cpu_count() or 4) // 2` instead of fixed `4`.
+- See `docs/ARCHITECTURE.md` and `docs/SELECTORS.md` for the full contract, and `docs/TESTING.md` for the test suite.
 
 ## What's New in v0.1.2
 
