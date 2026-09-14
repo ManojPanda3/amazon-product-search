@@ -7,11 +7,26 @@ from bs4.filter import SoupStrainer
 from dataclasses import dataclass, field
 from urllib.parse import ParseResult, urlparse, urlunparse, urlencode
 import concurrent.futures
-import logging
+import os, logging
+
+try:
+    from typing import TypedDict
+except ImportError:  # pragma: no cover - Python 3.7 fallback only
+    from typing_extensions import TypedDict
 
 __version__ = "0.1.2"
 
-MAX_WORKERS = 4
+MAX_WORKERS = (os.cpu_count() or 4) // 2
+
+
+class PriceResult(TypedDict):
+    price: float
+    currency: str
+
+
+class ReviewResult(TypedDict, total=False):
+    review: str
+    reviews_number: int
 
 
 @dataclass
@@ -23,7 +38,9 @@ class AmazonProduct:
         title (str | None): The title of the product.
         link (str | None): The URL link to the product page.
         review (str | None):  A string representing the product's review (e.g., "4.5 out of 5 stars").
-        price (str | None): The price of the product as a string.
+        review_numbers (int | None): The review count as an int (k/m/b suffixes converted).
+        price (float | None): The price of the product as a float.
+        currency (str | None): The currency symbol (e.g., "$").
         image (str | None): The URL of the product image.
     """
 
@@ -31,7 +48,7 @@ class AmazonProduct:
     link: str | None = None
     review: str | None = None
     review_numbers: int | None = None
-    price: str | None = None
+    price: float | None = None
     image: str | None = None
     currency: str | None = None
 
@@ -62,7 +79,6 @@ class AmazonResult:
     current_page: int = 1
     total_pages: int = 1
 
-    # Backward-compat: allow `for p in result` and `len(result)` / `result[i]`
     def __iter__(self):
         return iter(self.products)
 
@@ -92,7 +108,6 @@ class Amazon:
         self.is_debuging = is_debuging
         self.logger = logging.getLogger(__name__)
         self.logger.setLevel(logging.DEBUG if is_debuging else logging.ERROR)
-        # Reuse TCP connection across searches — avoids TLS handshake per request
         self.session = requests.Session()
         self.session.headers.update(self._HEADER)
 
@@ -100,7 +115,7 @@ class Amazon:
         """Close the underlying requests Session."""
         self.session.close()
 
-    def __enter__(self) -> "Amazon":
+    def __enter__(self) -> Amazon:
         return self
 
     def __exit__(self, *_exc) -> None:
@@ -134,9 +149,7 @@ class Amazon:
         if productName.strip() == "":
             raise ValueError("Error product Name is required")
 
-        # Normalize page: 0 or 1 -> no page param (first page); >1 -> include
         page_param = str(page) if page and page > 1 else None
-        # Also handle page == 1 explicitly if caller passes 1 — treat as first page without param
         clean_params = {
             "k": productName,
             "i": productType.strip() if productType.strip() != "" else None,
@@ -220,7 +233,6 @@ class Amazon:
         """
         fallback = requested_page if requested_page and requested_page > 0 else 1
         try:
-            # Try strainer first — only parses the pagination widget (faster on large pages)
             strainer = SoupStrainer(
                 "div", attrs={"data-csa-c-content-id": "pagination-button"}
             )
@@ -228,7 +240,6 @@ class Amazon:
             pagination_div = soup.find(
                 "div", attrs={"data-csa-c-content-id": "pagination-button"}
             )
-            # Strainer may yield empty soup if lxml nesting is unexpected — fallback to full parse
             if pagination_div is None:
                 soup = BeautifulSoup(html, "lxml")
                 pagination_div = soup.find(
@@ -237,7 +248,6 @@ class Amazon:
             if pagination_div is None:
                 return (fallback, fallback if fallback == 1 else fallback)
 
-            # Current page — the selected, aria-current page span
             current = fallback
             selected = pagination_div.find("span", class_="s-pagination-selected")
             if selected:
@@ -245,16 +255,13 @@ class Amazon:
                 if txt.isdigit():
                     current = int(txt)
                 else:
-                    # Sometimes contains whitespace; try regex
                     m = re.search(r"\d+", txt)
                     if m:
                         current = int(m.group())
             elif requested_page:
                 current = requested_page
 
-            # Total pages — max numeric s-pagination-item (covers <a> buttons and disabled "260")
             total = current
-            # Grab every pagination item (both <a> and <span>) inside the widget
             items = pagination_div.find_all(
                 ["a", "span"],
                 class_=re.compile(r"s-pagination-item"),
@@ -265,14 +272,11 @@ class Amazon:
                 if txt.isdigit():
                     nums.append(int(txt))
                 else:
-                    # Handle cases like "(260)" — not typical for pagination but safe
                     m = re.search(r"\d+", txt)
                     if m and txt.strip("() ").isdigit() is False:
-                        # Only accept pure numeric after stripping; avoid "Next"/"Previous"
                         pass
             if nums:
                 total = max(nums)
-            # If pagination shows ellipsis but last page is disabled span without digit extraction, use max
             if total < current:
                 total = current
             if total < 1:
@@ -330,9 +334,10 @@ class Amazon:
         if review:
             data.review = review.get("review")
             data.review_numbers = review.get("reviews_number")
+
         price = self.__get_price(div)
         if price is not None:
-            data.price = price.get("price")
+            data.price = price.get("price", 0.0)
             data.currency = price.get("currency")
         data.image = self.__get_image(div)
         return data
@@ -372,6 +377,7 @@ class Amazon:
                 "data-component-type": "s-product-image",
             },
         )
+
         if link_span:
             link_a = link_span.find("a")
             if link_a:
@@ -380,37 +386,55 @@ class Amazon:
                     return f"https://www.amazon.com{href}"
         return None
 
-    def __get_reviews(self, div: element.Tag) -> dict | None:
+    @staticmethod
+    def __convert_review_to_number(s: str) -> int:
+        s = s.lower()
+        if not s:
+            return 0
+        symb = {"k": int(1e3), "m": int(1e6), "b": int(1e9)}
+        review_num: float = 0.0
+        try:
+            review_num = float(s[0:-1]) * symb[s[-1]] if s[-1] in symb else float(s)
+        except ValueError:
+            review_num = 0.0
+
+        return int(review_num)
+
+    def __get_reviews(self, div: element.Tag) -> ReviewResult | None:
         review_div = div.find("div", attrs={"data-cy": "reviews-block"})
+
         if not review_div:
             return None
-        reviews: dict = {}
+
+        reviews: ReviewResult = {}
         review_span = review_div.find(
             "span",
             attrs={"class": "a-size-small a-color-base", "aria-hidden": "true"},
         )
+
         if review_span and review_span.string:
             reviews["review"] = review_span.string
 
         reviews_number_span = review_div.find(
             "span", attrs={"data-component-type": "s-client-side-analytics"}
         )
+
         if reviews_number_span:
             inner_span = reviews_number_span.find("span", attrs={"aria-hidden": "true"})
+
             if inner_span and inner_span.string:
                 count_text = inner_span.string.strip().replace(",", "")
-                # strip surrounding parens "(123)" -> "123", guard short strings
-                reviews["reviews_number"] = (
+                reviews["reviews_number"] = self.__convert_review_to_number(
                     count_text[1:-1] if len(count_text) >= 2 else count_text
                 )
             else:
-                reviews["reviews_number"] = None
+                reviews["reviews_number"] = 0
         else:
-            reviews["reviews_number"] = None
+            reviews["reviews_number"] = 0
 
         return reviews
 
-    def __get_price(self, div: element.Tag) -> dict | None:
+    def __get_price(self, div: element.Tag) -> PriceResult | None:
         """
         Extracts the product price from a product div.
 
@@ -418,32 +442,68 @@ class Amazon:
             div (element.Tag): A BeautifulSoup Tag representing a product.
 
         Returns:
-            dict | None: {"currency": str, "price": str} or None if not found.
+            dict | None: {"currency": str, "price": float} or None if not found.
+                Non-numeric amounts fall back to 0.0 (never raises).
         """
         for attr in ("price-recipe", "secondary-offer-recipe"):
             price_div = div.find("div", attrs={"data-cy": attr})
+
             if not price_div:
                 continue
-            # primary recipe uses a-offscreen, secondary uses a-color-base
+
             cls = "a-offscreen" if attr == "price-recipe" else "a-color-base"
             price_span = price_div.find("span", attrs={"class": cls})
+
             if price_span and price_span.string:
                 price = price_span.string.strip()
+                price = price.replace(",", "")
+
                 if "\u00a0" in price:
-                    currency, amount = price.split("\u00a0", 1)
+                    f, s = price.split("\u00a0", 1)
+                    currency, amount = self.__split_currency_amount(f, s)
                     return {"currency": currency, "price": amount}
-                # fallback: no NBSP, return whole string as price
+
+                try:
+                    price = float(price)
+                except ValueError:
+                    price = 0.0
+
                 return {"currency": "", "price": price}
-            # secondary-offer may have no .string but text (e.g. nested)
+
             if price_span:
-                text = price_span.get_text(strip=True)
+                text = price_span.get_text(strip=True).replace(",", "")
                 if text:
                     if "\u00a0" in text:
-                        currency, amount = text.split("\u00a0", 1)
+                        f, s = text.split("\u00a0", 1)
+                        currency, amount = self.__split_currency_amount(f, s)
                         return {"currency": currency, "price": amount}
-                    return {"currency": "", "price": text}
+
+                    try:
+                        price = float(text)
+                    except ValueError:
+                        price = 0.0
+
+                    return {"currency": "", "price": price}
 
         return None
+
+    @staticmethod
+    def __split_currency_amount(f: str, s: str) -> tuple[str, float]:
+        """Split an NBSP-separated price into (currency, amount).
+
+        Each side that parses as float becomes the amount; non-numeric
+        sides become the currency (last one wins). Both numeric →
+        amount is the second part; neither numeric → amount 0.0.
+        Uses float() — not str.isnumeric() — so decimals like "19.99"
+        are recognised as amounts.
+        """
+        currency, amount = "", 0.0
+        for part in (f, s):
+            try:
+                amount = float(part)
+            except ValueError:
+                currency = part
+        return currency, amount
 
     def __get_image(self, div: element.Tag) -> str | None:
         """
@@ -467,7 +527,7 @@ if __name__ == "__main__":
 
     amazon = Amazon(False)
     result = amazon.search("mac", productType="electronics")
-    # AmazonResult is iterable (for len/for) but holds pagination too
+
     print(
         json.dumps(
             {
