@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="Developer guide for amazon-product-search-v2: search Amazon products from Python without the PA API.">
+<title>amazon-product-search-v2 — Developer Guide</title>
+<style>
+  :root { color-scheme: light dark; --accent: #b45309; --code-bg: #f4f1ea; --border: #ddd5c3; }
+  @media (prefers-color-scheme: dark) { :root { --code-bg: #1f1d18; --border: #4a4436; } }
+  * { box-sizing: border-box; }
+  body { font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; line-height: 1.6; margin: 0; color: inherit; }
+  header { background: #131921; color: #fff; padding: 2.5rem 1.5rem; }
+  header h1 { margin: 0 0 .25rem; font-size: 1.8rem; }
+  header p { margin: .25rem 0; color: #d5d9d9; }
+  header code { background: #232f3e; color: #febd69; padding: .15rem .5rem; border-radius: 4px; }
+  nav { background: #232f3e; padding: .5rem 1.5rem; position: sticky; top: 0; }
+  nav a { color: #febd69; margin-right: 1rem; text-decoration: none; font-size: .9rem; }
+  nav a:hover { text-decoration: underline; }
+  main { max-width: 860px; margin: 0 auto; padding: 2rem 1.5rem 4rem; }
+  h2 { border-bottom: 2px solid var(--accent); padding-bottom: .3rem; margin-top: 2.5rem; }
+  table { border-collapse: collapse; width: 100%; margin: 1rem 0; font-size: .92rem; }
+  th, td { border: 1px solid var(--border); padding: .5rem .7rem; text-align: left; vertical-align: top; }
+  th { background: var(--code-bg); }
+  pre { background: var(--code-bg); border: 1px solid var(--border); border-radius: 6px; padding: 1rem; overflow-x: auto; font-size: .85rem; }
+  code { font-family: ui-monospace, "Cascadia Code", Consolas, monospace; }
+  p code, li code, td code { background: var(--code-bg); padding: .1rem .35rem; border-radius: 4px; font-size: .88em; }
+  .tok-k { color: #cf222e; } .tok-s { color: #0a3069; } .tok-c { color: #6e7781; font-style: italic; }
+  .tok-n { color: #0550ae; } .tok-b { color: #8250df; } .tok-d { color: #953800; }
+  @media (prefers-color-scheme: dark) {
+    .tok-k { color: #ff7b72; } .tok-s { color: #a5d6ff; } .tok-c { color: #8b949e; }
+    .tok-n { color: #79c0ff; } .tok-b { color: #d2a8ff; } .tok-d { color: #ffa657; }
+  }
+  .note { border-left: 4px solid var(--accent); padding: .5rem 1rem; margin: 1rem 0; background: var(--code-bg); }
+  footer { border-top: 1px solid var(--border); padding: 1.5rem; text-align: center; font-size: .85rem; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>🛍️ amazon-product-search-v2</h1>
+  <p>Search Amazon products from Python — no PA API key needed. Powered by <code>requests</code> + <code>BeautifulSoup4</code>.</p>
+  <p>Install: <code>pip install amazon-product-search-v2</code> &nbsp;·&nbsp; Import: <code>from amazon_product_search import Amazon</code></p>
+</header>
+
+<nav>
+  <a href="#install">Install</a>
+  <a href="#quickstart">Quickstart</a>
+  <a href="#params">Parameters</a>
+  <a href="#results">Results</a>
+  <a href="#pagination">Pagination</a>
+  <a href="#fields">Field semantics</a>
+  <a href="#errors">Errors</a>
+  <a href="#tuning">Tuning</a>
+  <a href="#notes">Notes</a>
+</nav>
+
+<main>
+
+<h2 id="install">Installation</h2>
+<p><strong>From PyPI (recommended):</strong></p>
+<pre><code class="language-shell">pip install amazon-product-search-v2</code></pre>
+<p><strong>From GitHub (developers):</strong></p>
+<pre><code class="language-shell">git clone --depth 1 https://github.com/ManojPanda3/amazon-product-search
+cd amazon-product-search
+pip install -e ".[test]"   # editable + test extras (pytest, coverage)</code></pre>
+<p>Requirements: Python 3.7+, <code>beautifulsoup4&gt;=4.11</code>, <code>requests&gt;=2.28</code>, <code>lxml&gt;=4.9</code>.</p>
+
+<h2 id="quickstart">Quickstart</h2>
+<pre><code class="language-python">from amazon_product_search import Amazon
+
+# Session is reused across searches (keep-alive).
+# Use as a context manager to auto-close.
+with Amazon() as amazon:
+    result = amazon.search("thinkpad", productType="electronics", page=1)
+
+print(result.current_page, "/", result.total_pages)
+for prod in result.products:
+    print(prod.title, prod.price, prod.currency)
+    print(prod.get())  # dict: title/link/review/review_numbers/currency/price/image</code></pre>
+
+<h2 id="params">Search parameters</h2>
+<p><code>Amazon.search(productName, productType="", brand="", priceRange="", page=0)</code></p>
+<table>
+  <tr><th>Parameter</th><th>Type</th><th>Required</th><th>Description</th></tr>
+  <tr><td><code>productName</code></td><td>str</td><td>Yes</td><td>Search term, e.g. <code>"thinkpad"</code>. Blank raises <code>ValueError</code>.</td></tr>
+  <tr><td><code>productType</code></td><td>str</td><td>No</td><td>Category filter, e.g. <code>"electronics"</code>, <code>"books"</code>.</td></tr>
+  <tr><td><code>brand</code></td><td>str</td><td>No</td><td>Brand filter, e.g. <code>"Apple"</code>.</td></tr>
+  <tr><td><code>priceRange</code></td><td>str</td><td>No</td><td><code>"min-max"</code>, e.g. <code>"100-200"</code>.</td></tr>
+  <tr><td><code>page</code></td><td>int</td><td>No</td><td>1-indexed page. <code>0</code>/<code>1</code> = first page (no <code>page</code> param sent); <code>2</code> → <code>?page=2</code>.</td></tr>
+</table>
+<pre><code class="language-python">amazon = Amazon()
+result = amazon.search(productName="iPhone", productType="electronics",
+                       brand="Apple", priceRange="80000-100000", page=2)
+amazon.close()</code></pre>
+
+<h2 id="results">Results</h2>
+<p><code>search()</code> returns an <code>AmazonResult</code> — iterable, sized and indexable (all proxy to <code>.products</code>):</p>
+<pre><code class="language-python">len(result)          # == len(result.products)
+for product in result: ...
+first = result[0]
+result.get()         # {"products": [...], "current_page": n, "total_pages": m}</code></pre>
+<table>
+  <tr><th>AmazonProduct field</th><th>Type</th><th>Example</th></tr>
+  <tr><td><code>title</code></td><td>str | None</td><td><code>"ThinkPad X1"</code></td></tr>
+  <tr><td><code>link</code></td><td>str | None</td><td><code>"https://www.amazon.com/dp/..."</code></td></tr>
+  <tr><td><code>review</code></td><td>str | None</td><td><code>"4.5 out of 5 stars"</code></td></tr>
+  <tr><td><code>review_numbers</code></td><td>int | None</td><td><code>1234</code> (<code>"1.2K"</code> → <code>1200</code>)</td></tr>
+  <tr><td><code>price</code></td><td>float | None</td><td><code>999.0</code></td></tr>
+  <tr><td><code>currency</code></td><td>str | None</td><td><code>"$"</code>, <code>"₹"</code></td></tr>
+  <tr><td><code>image</code></td><td>str | None</td><td>image URL</td></tr>
+</table>
+<p>Each product also has <code>.get()</code> returning these fields as a JSON-serialisable dict.</p>
+
+<h2 id="pagination">Pagination</h2>
+<pre><code class="language-python">from amazon_product_search import Amazon
+import json
+
+with Amazon() as amazon:
+    r1 = amazon.search("thinkpad", productType="electronics", page=1)
+    print(f"Page {r1.current_page} of {r1.total_pages} — {len(r1)} products")
+    r2 = amazon.search("thinkpad", productType="electronics", page=2)
+    print(json.dumps(r2.get(), indent=2))</code></pre>
+<p><strong>Iterate all pages:</strong></p>
+<pre><code class="language-python">amazon = Amazon()
+page, all_products = 1, []
+while True:
+    res = amazon.search("laptop", page=page)
+    all_products.extend(res.products)
+    if res.current_page &gt;= res.total_pages:
+        break
+    page += 1
+print(f"Collected {len(all_products)} across {res.total_pages} pages")
+amazon.close()</code></pre>
+
+<h2 id="fields">Field semantics</h2>
+<div class="note">Parsing never raises on missing markup — fields degrade gracefully.</div>
+<table>
+  <tr><th>Situation</th><th>Value</th></tr>
+  <tr><td>Field absent from Amazon's HTML</td><td><code>None</code> (or whole price dict <code>None</code>)</td></tr>
+  <tr><td>Review count missing, block present</td><td><code>0</code></td></tr>
+  <tr><td>Price not parseable as a number</td><td><code>0.0</code> (never raises)</td></tr>
+  <tr><td>Review count suffixes</td><td><code>"1.2K"</code> → <code>1200</code>, <code>M</code>/<code>B</code> supported</td></tr>
+</table>
+
+<h2 id="errors">Error handling</h2>
+<table>
+  <tr><th>Error</th><th>Cause / fix</th></tr>
+  <tr><td><code>ValueError: Error product Name is required</code></td><td>Pass a non-blank <code>productName</code>.</td></tr>
+  <tr><td><code>ValueError: Error while geting data from Amazon</code></td><td>Network failure or Amazon blocked the request. Retry with <code>Amazon(is_debuging=True)</code> for logs, add delays/proxies for bulk scraping.</td></tr>
+  <tr><td>Empty <code>products</code></td><td>No match, or Amazon changed markup — check <code>total_pages</code>, try another <code>page</code>.</td></tr>
+</table>
+
+<h2 id="tuning">Session &amp; performance</h2>
+<pre><code class="language-python"># Reuse one instance: the requests.Session stays alive (no TLS handshake per search).
+# workers controls the ThreadPoolExecutor fan-out (default: cpu_count() // 2).
+amazon = Amazon(is_debuging=False, workers=4)
+...
+amazon.close()  # or: with Amazon() as amazon: ...</code></pre>
+
+<h2 id="notes">Important notes</h2>
+<ul>
+  <li><strong>Rate limiting:</strong> Amazon may block frequent requests — add delays/proxies for bulk scraping.</li>
+  <li><strong>ToS:</strong> scraping may violate Amazon's ToS — personal/educational use only.</li>
+  <li><strong>Site changes:</strong> if Amazon changes markup, selectors are documented in <code>docs/SELECTORS.md</code> with an update checklist.</li>
+</ul>
+<p>Contributing: PRs welcome — see <code>docs/TESTING.md</code> and <code>docs/ARCHITECTURE.md</code> in the repo. MIT licensed.</p>
+
+</main>
+
+<footer>
+  amazon-product-search-v2 developer guide ·
+  <a href="https://github.com/ManojPanda3/amazon-product-search">GitHub</a> ·
+  <a href="https://pypi.org/p/amazon-product-search-v2">PyPI</a>
+</footer>
+
+<script>
+// Dependency-free Python syntax highlighting for code.language-python blocks.
+// Tokenizes textContent (never raw HTML), so entities like &gt; survive round-trip.
+function pyEsc(s) {
+  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+function pyHiString(tok) {
+  var fm = tok.match(/^([fF])(['"]{1,3})/);
+  if (!fm) return '<span class="tok-s">' + pyEsc(tok) + '</span>';
+  var q = fm[2], prefix = fm[0];
+  var body = tok.slice(prefix.length, tok.length - q.length);
+  var out = '<span class="tok-s">' + pyEsc(prefix);
+  var bre = /\{([^{}]*)\}/g, last = 0, bm;
+  while ((bm = bre.exec(body))) {
+    out += pyEsc(body.slice(last, bm.index)) + '</span>{' +
+      highlightPython(bm[1]) + '<span class="tok-s">}';
+    last = bm.index + bm[0].length;
+  }
+  return out + pyEsc(body.slice(last)) + pyEsc(q) + '</span>';
+}
+function highlightPython(src) {
+  var re = /(#[^\n]*)|("""[\s\S]*?"""|'''[\s\S]*?'''|[rRbBfF]{0,2}"(?:\\.|[^"\\\n])*"|[rRbBfF]{0,2}'(?:\\.|[^'\\\n])*')|\b(import|from|as|def|return|for|in|while|if|elif|else|with|class|try|except|finally|raise|pass|break|continue|lambda|yield|assert|del|global|nonlocal|and|or|not|is|None|True|False)\b|\b(print|len|str|int|float|bool|dict|list|set|tuple|range|open|super|type|isinstance|enumerate|zip|sorted|min|max|sum|abs|Exception|ValueError|KeyError|AttributeError)\b|(@[A-Za-z_][\w.]*)|\b(\d[\d_]*(?:\.\d*)?(?:[eE][+-]?\d+)?j?)\b/g;
+  var out = '', last = 0, m;
+  while ((m = re.exec(src))) {
+    out += pyEsc(src.slice(last, m.index));
+    var tok = m[0];
+    if (m[1] !== undefined) out += '<span class="tok-c">' + pyEsc(tok) + '</span>';
+    else if (m[2] !== undefined) out += pyHiString(tok);
+    else if (m[3] !== undefined) out += '<span class="tok-k">' + pyEsc(tok) + '</span>';
+    else if (m[4] !== undefined) out += '<span class="tok-b">' + pyEsc(tok) + '</span>';
+    else if (m[5] !== undefined) out += '<span class="tok-d">' + pyEsc(tok) + '</span>';
+    else if (m[6] !== undefined) out += '<span class="tok-n">' + pyEsc(tok) + '</span>';
+    else out += pyEsc(tok);
+    last = m.index + tok.length;
+  }
+  return out + pyEsc(src.slice(last));
+}
+document.addEventListener('DOMContentLoaded', function () {
+  document.querySelectorAll('code.language-python').forEach(function (el) {
+    el.innerHTML = highlightPython(el.textContent);
+  });
+});
+</script>
+
+</body>
+</html>
