@@ -30,7 +30,30 @@ requires-python = ">=3.7"
 dependencies = [
     "beautifulsoup4>=4.11.0",
     "requests>=2.28.0",
-    "lxml>=4.9.0"
+    "lxml>=4.9.0",
+]
+
+[project.optional-dependencies]
+test = [
+    "pytest>=7.4.4",
+    "coverage>=7.0",
+]
+
+[tool.pytest.ini_options]
+markers = [
+    "live: opt-in live-network smoke test against Amazon (skipped by default)",
+]
+
+[tool.coverage.run]
+source = ["amazon_product_search"]
+branch = true
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = false
+exclude_lines = [
+    "if __name__ == .__main__.:",
+    "pragma: no cover",
 ]
 
 

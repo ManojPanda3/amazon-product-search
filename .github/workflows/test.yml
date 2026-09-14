@@ -1,0 +1,33 @@
+name: Tests
+
+on:
+  push: # every push, any branch
+  pull_request: # and every PR (merge checks)
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.9", "3.12"]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      - name: Install package + test extras
+        run: python -m pip install --upgrade pip && python -m pip install -e ".[test]"
+
+      - name: Run pytest (offline, live deselected)
+        run: python -m pytest tests/ -q -m "not live"
+
+      - name: Coverage gate (>=85% on parsing layer)
+        run: |
+          coverage run -m pytest tests/ -q -m "not live"
+          coverage report --include="amazon_product_search/*" --fail-under=85
