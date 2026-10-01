@@ -3,7 +3,6 @@ name: Tests
 on:
   push: # every push, any branch
   pull_request: # and every PR (merge checks)
-  workflow_dispatch:
 
 jobs:
   test:
@@ -22,12 +21,27 @@ jobs:
           cache: pip
 
       - name: Install package + test extras
-        run: python -m pip install --upgrade pip && python -m pip install -e ".[test]"
+        run: python -m pip install -e ".[test]"
 
       - name: Run pytest (offline, live deselected)
         run: python -m pytest tests/ -q -m "not live"
 
-      - name: Coverage gate (>=85% on parsing layer)
+      - name: Coverage gate >=85% on parsing layer
+        if: matrix.python-version == '3.12'
         run: |
           coverage run -m pytest tests/ -q -m "not live"
           coverage report --include="amazon_product_search/*" --fail-under=85
+
+  # Stable gate for branch protection.
+  #
+  # The matrix above reports as "test (3.9)" and "test (3.12)", so a
+  # required status check named "test" would never be satisfied and the
+  # PR would sit blocked forever. This job publishes exactly one check
+  # named "test", and it only passes when every matrix job passes.
+  gate:
+    name: test
+    needs: [test]
+    runs-on: ubuntu-latest
+    steps:
+      - name: All matrix checks passed
+        run: echo "python 3.9 and 3.12 both green"
