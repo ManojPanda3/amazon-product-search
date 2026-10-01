@@ -35,12 +35,12 @@ Parsers and extractors are pure module-level functions holding no client state, 
    `div[data-csa-c-content-id="pagination-button"]` with a full-parse
    fallback; reads `span.s-pagination-selected` (current) and max numeric
    `s-pagination-item` (total). See `SELECTORS.md`.
-6. **Extract concurrently** — `ThreadPoolExecutor(max_workers=self.workers)`
-   runs `extract_data` per div (`workers` defaults to `MAX_WORKERS =
-   (os.cpu_count() or 4) // 2`, override via `Amazon(workers=N)`).
-   `None` results are filtered out; result order is completion order
-   (not document order).
-7. **Return** — `AmazonResult(products, current_page, total_pages)`.
+6. **Extract** — runs `extract_data` per div in a plain loop. Single-threaded on
+   purpose: BeautifulSoup parsing holds the GIL, and a thread pool measured ~25%
+   slower than the loop, so `workers` is accepted for backward compatibility but
+   no longer drives extraction.
+7. **Filter** — `None` results filtered out; products are returned in document order.
+8. **Return** — `AmazonResult(products, current_page, total_pages)`.
 
 ## Module map
 

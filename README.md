@@ -2,16 +2,16 @@
 
 ## Overview
 
-Tired of manually browsing Amazon for the best deals? 🌐 Meet **Amazon Product Search** — your trusty Python library to scrape product details from Amazon's search results with just a few lines of code. Powered by **BeautifulSoup4 (bs4)**, **Requests**, and **multithreading** for speed, this library helps you efficiently gather product titles, prices, reviews, images, and direct links. 🎉
+Tired of manually browsing Amazon for the best deals? 🌐 Meet **Amazon Product Search** — your trusty Python library to scrape product details from Amazon's search results with just a few lines of code. Powered by **BeautifulSoup4 (bs4)**, **Requests**, and optional **async** requests for speed, this library helps you efficiently gather product titles, prices, reviews, images, and direct links. 🎉
 
 ### Key Features
 
 - **Product Search:** Search for products by name, type, brand, and price range. 📱💻
 - **Detailed Data:** Scrape titles, prices (+currency), reviews (+count), images, and URLs. 🎯
 - **Pagination:** Navigate Amazon pages via `page` param and get `current_page` / `total_pages` from `data-csa-c-content-id="pagination-button"`. 📄
-- **Fast and Efficient:** Session reuse (keep-alive), `SoupStrainer` partial parsing, and `ThreadPoolExecutor` for extraction.
+- **Fast and Efficient:** Session reuse (keep-alive), `SoupStrainer` partial parsing, and optional `async_search()` for overlapping network I/O.
 - **Easy-to-use:** Simple API + context-manager + backward-compatible iteration. ✨
-- **Lightweight & Compatible:** Python 3.7–3.14, relaxed deps (`beautifulsoup4>=4.11`, `requests>=2.28`, `lxml>=4.9`). No heavy frameworks.
+- **Lightweight & Compatible:** Python 3.9–3.14, relaxed deps (`beautifulsoup4>=4.11`, `requests>=2.28`, `lxml>=4.9`, `httpx>=0.27`). No heavy frameworks.
 
 ## Setup 🛠️
 
@@ -67,6 +67,32 @@ print(len(result))          # == len(result.products)
 for product in result:      # iterates products directly
     print(product.get())
 ```
+
+### Async Search (overlapping network I/O) 🐍
+
+Searching Amazon is dominated by network wait, so `async_search()` lets you run several searches at once. It performs one search per call; batch them yourself with `asyncio.gather()` or a task group.
+
+```python
+import asyncio
+from amazon_product_search import Amazon
+
+async def main():
+    async with Amazon() as amazon:
+        results = await asyncio.gather(
+            amazon.async_search("thinkpad", productType="electronics"),
+            amazon.async_search("macbook air"),
+            amazon.async_search("dell xps"),
+        )
+    for result in results:
+        print(result.current_page, len(result.products))
+
+asyncio.run(main())
+```
+
+Notes:
+- `async_search()` takes the same parameters and returns the same `AmazonResult` as `search()`.
+- Parsing runs off the event loop, so one large page won't stall your other searches.
+- Non-200 responses and network failures are logged and raise `ValueError`, matching `search()`.
 
 ### Parameters for `search()`
 

@@ -38,5 +38,5 @@ setup(
         "Topic :: Software Development :: Libraries :: Python Modules",
     ],
     keywords="amazon product search scraping web scraping",
-    python_requires=">=3.7",
+    python_requires=">=3.9",
 )

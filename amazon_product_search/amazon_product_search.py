@@ -1,10 +1,7 @@
-"""Amazon search client: request, search orchestration, result parsing."""
-
-from __future__ import annotations
-
-import concurrent.futures
+import asyncio
 import logging
 
+import httpx
 import requests
 from urllib.parse import ParseResult, urlencode, urlparse, urlunparse
 
@@ -24,11 +21,11 @@ __all__ = [
 
 
 class Amazon:
-    def __init__(self, is_debuging: bool = False, workers: int = MAX_WORKERS) -> None:
+    def __init__(self, is_debuging: bool = False, workers: int | None = None):
         self.base_url: ParseResult = urlparse("https://www.amazon.com/s")
-        self.workers = workers
+        self.workers = workers if workers is not None else MAX_WORKERS
         self._HEADER: dict = {
-            "User-Agent": "Mozilla/5.0 (X11; Linuin zipx x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
+            "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
             "Accept-Language": "en-US, en;q=0.5",
         }
         self.is_debuging = is_debuging
@@ -38,43 +35,30 @@ class Amazon:
         self.session.headers.update(self._HEADER)
 
     def close(self) -> None:
-        """Close the underlying requests Session."""
+        """Close underlying requests Session."""
         self.session.close()
 
-    def __enter__(self) -> Amazon:
+    def __enter__(self) -> "Amazon":
         return self
 
     def __exit__(self, *_exc) -> None:
         self.close()
 
-    def search(
+    async def __aenter__(self) -> "Amazon":
+        return self
+
+    async def __aexit__(self, *_exc) -> None:
+        self.close()
+
+    def __build_url(
         self,
         productName: str,
         productType: str = "",
         brand: str = "",
         priceRange: str = "",
         page: int = 0,
-    ) -> AmazonResult:
-        """
-        Searches for products on Amazon based on the provided criteria.
-
-        Args:
-            productName (str): The name of the product to search for (required).
-            productType (str ): The type of product (e.g., "electronics").  Optional.
-            brand (str ): The brand of the product. Optional.
-            priceRange (str ): The price range of the product.  Optional.
-            page (int): Page number (1-indexed). 0 / 1 both mean first page. Optional.
-
-        Returns:
-            AmazonResult: Products plus pagination info (current_page, total_pages).
-
-        Raises:
-            ValueError: If productName is empty.
-            Exception: If there is an error fetching data from Amazon.
-        """
-        if productName.strip() == "":
-            raise ValueError("Error product Name is required")
-
+    ) -> str:
+        """Build the Amazon search URL for the given criteria."""
         page_param = str(page) if page and page > 1 else None
         clean_params = {
             "k": productName,
@@ -86,7 +70,39 @@ class Amazon:
         query_params: str = urlencode(
             {k: v for k, v in clean_params.items() if v is not None}
         )
-        url = urlunparse(self.base_url._replace(query=query_params))
+        return urlunparse(self.base_url._replace(query=query_params))
+
+    def search(
+        self,
+        productName: str,
+        productType: str = "",
+        brand: str = "",
+        priceRange: str = "",
+        page: int = 0,
+    ) -> AmazonResult:
+        """
+        Searches products on Amazon based on provided criteria.
+
+        Args:
+            productName (str): The name of the product to search for (required).
+            productType (str): The type of product (e.g., "electronics"). Optional.
+            brand (str): The brand of the product. Optional.
+            priceRange (str): The price range of the product. Optional.
+            page (int): The page number to fetch. Optional.
+
+        Returns:
+            AmazonResult: Products found plus pagination info (current_page, total_pages).
+
+        Raises:
+            ValueError: If productName is empty.
+
+        Exception:
+            If there is an error fetching data from Amazon.
+        """
+        if productName.strip() == "":
+            raise ValueError("Error product Name is required")
+
+        url = self.__build_url(productName, productType, brand, priceRange, page)
 
         responseHtml = self.__amazon_request(url)
         if not responseHtml:
@@ -101,6 +117,61 @@ class Amazon:
             products=products, current_page=current_page, total_pages=total_pages
         )
 
+    async def async_search(
+        self,
+        productName: str,
+        productType: str = "",
+        brand: str = "",
+        priceRange: str = "",
+        page: int = 0,
+    ) -> AmazonResult:
+        """
+        Searches products on Amazon asynchronously.
+
+        A single search is performed per call. To overlap the network waits of
+        several searches, await them together, for example::
+
+            results = await asyncio.gather(
+                amazon.async_search("thinkpad"),
+                amazon.async_search("macbook"),
+            )
+
+        Args:
+            productName (str): The name of the product to search for (required).
+            productType (str): The type of product (e.g., "electronics"). Optional.
+            brand (str): The brand of the product. Optional.
+            priceRange (str): The price range of the product. Optional.
+            page (int): The page number to fetch. Optional.
+
+        Returns:
+            AmazonResult: Products found plus pagination info (current_page, total_pages).
+
+        Raises:
+            ValueError: If productName is empty or the data could not be fetched.
+
+        Exception:
+            If there is an error fetching data from Amazon.
+        """
+        if productName.strip() == "":
+            raise ValueError("Error product Name is required")
+
+        url = self.__build_url(productName, productType, brand, priceRange, page)
+
+        responseHtml = await self.__async_request(url)
+        if not responseHtml:
+            raise ValueError("Error while geting data from Amazon")
+
+        # Parsing is CPU-bound and holds the GIL, so keep it off the event loop
+        # to leave other in-flight searches free to make progress.
+        products, (current_page, total_pages) = await asyncio.gather(
+            asyncio.to_thread(self.__process_html, responseHtml),
+            asyncio.to_thread(parse_pagination, responseHtml, requested_page=page),
+        )
+
+        return AmazonResult(
+            products=products, current_page=current_page, total_pages=total_pages
+        )
+
     def __amazon_request(self, url: str) -> str:
         """
         Sends an HTTP GET request to the specified Amazon URL.
@@ -109,24 +180,52 @@ class Amazon:
             url (str): The URL to request.
 
         Returns:
-            str: The response content as text if successful, empty string otherwise.
+            str: The response content text if successful, empty string otherwise.
         """
         try:
             response = self.session.get(url, timeout=10)
             if response.status_code != 200:
-                self.logger.error(f"Error while geting {url}:\t{response.content}")
+                self.logger.error(
+                    f"Error while geting {url}:\t{response.content}"
+                )
                 return ""
             return response.text
         except requests.RequestException as error:
-            self.logger.error(f"Error while fetching amazon url[{url}]\nError:{error}")
+            self.logger.error(
+                f"Error while fetching amazon url[{url}]\nError:{error}"
+            )
             return ""
 
+    async def __async_request(self, url: str) -> str:
+        """
+        Sends an asynchronous HTTP GET request to the specified Amazon URL.
 
+        Args:
+            url (str): The URL to request.
 
+        Returns:
+            str: The response content text if successful, empty string otherwise.
+        """
+        try:
+            async with httpx.AsyncClient(
+                headers=self._HEADER, timeout=10, follow_redirects=True
+            ) as client:
+                response = await client.get(url)
+            if response.status_code != 200:
+                self.logger.error(
+                    f"Error while geting {url}:\t{response.content}"
+                )
+                return ""
+            return response.text
+        except httpx.HTTPError as error:
+            self.logger.error(
+                f"Error while fetching amazon url[{url}]\nError:{error}"
+            )
+            return ""
 
     def __process_html(self, html: str) -> list[AmazonProduct]:
         """
-        Processes the HTML content to extract product information.  Uses multithreading.
+        Processes the HTML content to extract product information.
 
         Args:
             html (str): The HTML content to process.
@@ -139,36 +238,17 @@ class Amazon:
             return []
 
         products: list[AmazonProduct] = []
-
-        with concurrent.futures.ThreadPoolExecutor(
-            max_workers=self.workers
-        ) as executor:
-            futures = [executor.submit(extract_data, div) for div in divs]
-            for future in concurrent.futures.as_completed(futures):
-                product = future.result()
-                if product:
-                    products.append(product)
+        for div in divs:
+            product = extract_data(div)
+            if product:
+                products.append(product)
 
         return products
-
 
 
 if __name__ == "__main__":
     import json
 
-    amazon = Amazon(False)
-    result = amazon.search("thinkpad", productType="electronics")
-
-    print(
-        json.dumps(
-            {
-                "products": [p.get() for p in result.products],
-                "current_page": result.current_page,
-                "total_pages": result.total_pages,
-            },
-            indent=2,
-        )
-    )
-
-    if result.products:
-        print(result.products[0].scrape())
+    amazon = Amazon(is_debuging=True)
+    result = amazon.search("thinkpad", productType="electronics", page=1)
+    print(json.dumps(result.to_dict(), indent=2))

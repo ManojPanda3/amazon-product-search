@@ -27,7 +27,7 @@ Python 3.9 and 3.12 for every push/PR.
 | `test_request.py` | `__amazon_request` (200 / non-200 / exception), session headers, `close()` + context manager |
 | `test_parse_html.py` — folded into `test_extractors.py` | `SoupStrainer` scoping |
 | `test_pagination.py` | selected/total/ellipsis/missing-widget/regex/exception paths |
-| `test_extractors.py` | all six field extractors, `extract_data` (incl. `None`/`0` defaults, `K`-suffix counts, comma prices, garbage-price no-crash), `convert_review_to_number` (`K`/`M`/`B`/empty/garbage), `split_currency_amount`, `__process_html` threading |
+| `test_extractors.py` | all six field extractors, `extract_data` (incl. `None`/`0` defaults, `K`-suffix counts, comma prices, garbage-price no-crash), `convert_review_to_number` (`K`/`M`/`B`/empty/garbage), `split_currency_amount`, `__process_html` |
 | `test_models.py` | `AmazonProduct`/`AmazonResult` contracts |
 | `test_config.py` | `MAX_WORKERS` int, `workers=` override, debug log level |
 | `test_live.py` (`@pytest.mark.live`) | opt-in real-Amazon smoke; caution: rate-limit/ToS risk — never run in CI |
