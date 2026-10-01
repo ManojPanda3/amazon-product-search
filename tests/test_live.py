@@ -66,18 +66,33 @@ def test_live_repeated_searches_stay_unblocked():
             assert len(result.products) > 0, f"blocked on query {query!r}"
 
 
-def test_live_blocked_response_is_retried_not_returned_as_empty():
-    """A bot challenge must never reach the parser as empty products.
+def test_live_blocked_response_is_never_returned_as_html():
+    """A bot challenge must never reach the parser as if it were results.
 
-    Checks the classification itself: whatever the network does, the transport
-    must never hand back a body containing a challenge marker as if it were a
-    result page. Runs several queries so a live block is actually exercised.
+    The invariant is a property of the *code*, not of Amazon's mood: a call must
+    either return clean result HTML or raise ``TransportError``. It must never
+    hand back a challenge page.
+
+    Deliberately does not assert that the request succeeded. Amazon blocks real
+    IPs intermittently, and a test that fails when the network misbehaves tests
+    Amazon rather than this library.
     """
     _require_live()
+    from amazon_product_search import TransportError
     from amazon_product_search.transport import is_blocked
 
+    outcomes = {"clean": 0, "blocked": 0}
     with Amazon(workers=2) as amazon:
         for query in ("thinkpad", "macbook pro", "usb-c hub"):
-            html = amazon.transport.get(f"https://www.amazon.com/s?k={query.replace(' ', '+')}")
+            url = f"https://www.amazon.com/s?k={query.replace(' ', '+')}"
+            try:
+                html = amazon.transport.get(url)
+            except TransportError:
+                # The correct outcome: retries exhausted, caller told it failed.
+                outcomes["blocked"] += 1
+                continue
             assert not is_blocked(html), f"challenge page leaked through for {query!r}"
-            assert "s-search-result" in html
+            assert "s-search-result" in html, f"unexpected body shape for {query!r}"
+            outcomes["clean"] += 1
+
+    assert outcomes["clean"] or outcomes["blocked"], "no live requests were made"
