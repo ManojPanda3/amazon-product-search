@@ -184,7 +184,7 @@ for product in res:  # or res.products
 2. **Request:** `requests.Session` reuse (keep-alive, header persistence), 10s timeout, `RequestException` handling, `networkidle` not needed.
 3. **Parse products:** `SoupStrainer("div", {"data-component-type":"s-search-result"})` + `lxml` — only product divs are parsed.
 4. **Parse pagination:** `SoupStrainer("div", {"data-csa-c-content-id":"pagination-button"})` → reads `span.s-pagination-selected` (current) and max `a/span.s-pagination-item` numeric (total, e.g. `260`).
-5. **Extract:** `ThreadPoolExecutor(max_workers=workers)` (`workers` defaults to `(os.cpu_count() or 4) // 2`) concurrently runs `extract_data` (title/link/review/price/image).
+5. **Extract:** runs `extract_data` (title/link/review/price/image) per div. Extraction is single-threaded on purpose: parsing holds the GIL, and a thread pool measured slower than a plain loop.
 6. **Return:** `AmazonResult(products, current_page, total_pages)`.
 
 ## Unreleased (unversioned, in working tree)
