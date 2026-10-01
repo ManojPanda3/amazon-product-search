@@ -1,56 +1,54 @@
 # Contribution Policy
 
-## Branching rules
+Solo-maintained project. There is one reviewer and they are the author, so
+branch protection and required approvals are not used here.
 
-**Never push directly to `main`.**
+## Branching
 
-`main` is the protected release branch. Every change lands through a pull request.
+Work on a branch, push the branch, and merge it yourself:
 
-| Change | How it lands |
-| --- | --- |
-| New feature | Feature branch → PR → merge to `main` |
-| Bug fix | Fix branch → PR → merge to `main` |
-| Documentation only | Docs branch → PR → merge to `main` |
+```bash
+git checkout main && git pull --ff-only
+git checkout -b fix/short-description
+# edit, test, commit
+git push -u origin HEAD
+gh pr create --base main
+gh pr merge --squash --delete-branch
+```
 
-There are no exceptions. Not for small fixes, not for "obvious" changes, not
-when a test is already green locally.
+Branch names: `feat/` new capability, `fix/` bug fix, `docs/` docs only,
+`chore/` maintenance.
 
-## How to work
+A PR is still worth opening even when nobody else reviews it. It gives you the
+CI run on the real 3.9 and 3.12 matrix, and a diff to read before it lands.
 
-1. **Sync first.** `git checkout main && git pull --ff-only`
-2. **Branch.** `git checkout -b feat/short-description`
-   - `feat/` new capability
-   - `fix/` bug fix
-   - `docs/` documentation only
-   - `chore/` maintenance
-3. **Commit.** Small, single-purpose commits with a real message.
-4. **Push the branch.** `git push -u origin HEAD`
-5. **Open a PR.** `gh pr create` against `main`.
-6. **Wait for CI.** Do not merge with a red build.
-7. **Merge, then delete the branch.**
+## Verify before you push
 
-## Why
-
-Review exists to catch mistakes the author cannot see. I pushed to `main`
-directly and shipped a `TypeError` that broke every supported Python version
-except the one on my machine. A PR with CI on 3.9 and 3.12 would have caught it
-before anyone saw it.
-
-## Verifying before you push
-
-CI runs Python 3.9 and 3.12. Your local interpreter is almost certainly neither.
+CI runs Python 3.9 and 3.12. Your local interpreter is usually neither, and
+that gap has shipped a real bug before.
 
 ```bash
 python -m pytest tests/ -q -m "not live"
 ```
 
-If you add code that touches annotations, syntax, or stdlib behavior, check the
-oldest supported version too. `from __future__ import annotations` must be the
-**first statement** in a module, after the docstring and before any import, or
-the file will not compile at all.
+If you touch annotations, syntax, or stdlib behavior, check the oldest
+supported version too:
 
-## Protected branch
+```bash
+uv python install 3.9
+uv run --python 3.9 python -m pytest tests/ -q -m "not live"
+```
 
-`main` is protected on GitHub. Direct pushes are expected to be rejected. If a
-push to `main` succeeds, treat it as a mistake: say so immediately, and open a
-follow-up PR with the fix rather than rewriting history.
+`from __future__ import annotations` must be the **first statement** in a
+module, after the docstring and before any import. Placing it after an import
+is a `SyntaxError`, and omitting it makes `int | None` fail at runtime on 3.9.
+
+## If you want real review later
+
+Add a second GitHub account as a collaborator with write access, then enable
+branch protection on `main` with 1 required approving review and
+`enforce_admins` on. That combination is unsatisfiable while you are the only
+account, so do not turn it on until the second account exists.
+
+More generally: enabling a rule that the repo cannot satisfy blocks your own
+work without protecting anything.
