@@ -32,19 +32,14 @@ def parse_html(html: str) -> list[element.Tag]:
 
 def parse_pagination(html: str, requested_page: int = 0) -> tuple[int, int]:
     """
-    Extract pagination info anchored on data-csa-c-content-id="pagination-button".
-    Amazon renders pagination inside:
-      <div data-csa-c-content-id="pagination-button" ...>
-        <span class="s-pagination-selected">1</span>
-        <a class="s-pagination-button">2</a>
-        ...
-        <span class="s-pagination-disabled">260</span>
-      </div>
+    Extract pagination state from the container tagged
+    data-csa-c-content-id="pagination-button".
+
     Args:
-        html: Full response HTML.
-        requested_page: Page requested in `search()` (fallback if markup missing).
+    html: Full response HTML.
+    requested_page: Page requested `search()` (fallback when markup is missing).
     Returns:
-        (current_page, total_pages)
+    (current_page, total_pages)
     """
     fallback = requested_page if requested_page and requested_page > 0 else 1
     try:
