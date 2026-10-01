@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
-import requests
 from bs4 import BeautifulSoup
 from dataclasses import dataclass, field
+
+from curl_cffi import requests as curl_requests
 
 try:
     from typing import TypedDict
@@ -94,7 +95,7 @@ class AmazonProduct:
         if link == None:
             raise ValueError("link is not valid")
 
-        req = requests.get(link)
+        req = curl_requests.get(link, impersonate="chrome124", timeout=10)
         if req.status_code != 200:
             raise ValueError("request is unsuccessful")
 

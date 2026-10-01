@@ -3,35 +3,29 @@
 import asyncio
 import time
 
-import httpx
-import pytest
-
 from amazon_product_search import Amazon
 
 from .conftest import SEARCH_PAGE_HTML
 
 
-def _patch_async_get(monkeypatch, status_code=200, text=SEARCH_PAGE_HTML, delay=0.0):
-    """Patch the async request path with a stub httpx client."""
+def _patch_async_get(amazon, text=SEARCH_PAGE_HTML, delay=0.0):
+    """Patch the async transport with a canned response."""
     calls = []
 
-    async def fake_get(self, url, **kwargs):
+    async def fake_aget(url):
         calls.append(url)
         if delay:
             await asyncio.sleep(delay)
-        return httpx.Response(status_code, text=text, request=httpx.Request("GET", url))
+        return text
 
-    monkeypatch.setattr(httpx.AsyncClient, "get", fake_get)
+    amazon.transport.aget = fake_aget
     return calls
 
 
-def test_async_search_matches_sync(amazon, monkeypatch):
+def test_async_search_matches_sync(amazon):
     """Same criteria must yield the same products as the sync path."""
-    monkeypatch.setattr(
-        "amazon_product_search.amazon_product_search.Amazon._Amazon__amazon_request",
-        lambda self, url: SEARCH_PAGE_HTML,
-    )
-    calls = _patch_async_get(monkeypatch)
+    amazon._Amazon__amazon_request = lambda url: SEARCH_PAGE_HTML
+    calls = _patch_async_get(amazon)
 
     sync_result = amazon.search("thinkpad", productType="electronics", page=2)
     async_result = asyncio.run(
@@ -47,34 +41,36 @@ def test_async_search_matches_sync(amazon, monkeypatch):
     assert [p.price for p in async_result.products] == [19.99, 29.99]
 
 
-def test_async_search_blank_name_raises(amazon, monkeypatch):
+def test_async_search_blank_name_raises(amazon):
     """Blank productName keeps the sync path's validation error."""
-    _patch_async_get(monkeypatch)
-    with pytest.raises(ValueError, match="product Name is required"):
+    _patch_async_get(amazon)
+    try:
         asyncio.run(amazon.async_search("   "))
+    except ValueError as error:
+        assert "product Name is required" in str(error)
+    else:
+        raise AssertionError("expected ValueError for blank productName")
 
 
-def test_async_search_non_200_raises(amazon, monkeypatch):
-    """A non-200 response raises rather than returning empty results."""
-    _patch_async_get(monkeypatch, status_code=503, text="nope")
-    with pytest.raises(ValueError, match="while geting data"):
+def test_async_search_transport_failure_raises(amazon):
+    """A transport failure is surfaced as ValueError, not leaked."""
+    from amazon_product_search import TransportError
+
+    async def boom(url):
+        raise TransportError("blocked after 3 attempts")
+
+    amazon.transport.aget = boom
+    try:
         asyncio.run(amazon.async_search("thinkpad"))
+    except ValueError as error:
+        assert "while geting data" in str(error)
+    else:
+        raise AssertionError("expected ValueError when the transport gives up")
 
 
-def test_async_search_network_error_raises(amazon, monkeypatch):
-    """A transport failure is logged and surfaced as ValueError, not an httpx error."""
-
-    async def boom(self, url, **kwargs):
-        raise httpx.ConnectError("no route to host", request=httpx.Request("GET", url))
-
-    monkeypatch.setattr(httpx.AsyncClient, "get", boom)
-    with pytest.raises(ValueError, match="while geting data"):
-        asyncio.run(amazon.async_search("thinkpad"))
-
-
-def test_concurrent_searches_overlap(amazon, monkeypatch):
+def test_concurrent_searches_overlap(amazon):
     """5 gathered searches must take ~1 delay, not 5."""
-    _patch_async_get(monkeypatch, delay=0.1)
+    _patch_async_get(amazon, delay=0.1)
 
     async def run():
         return await asyncio.gather(*(amazon.async_search(f"item{i}") for i in range(5)))
@@ -89,12 +85,12 @@ def test_concurrent_searches_overlap(amazon, monkeypatch):
     assert elapsed < 0.35, f"searches did not overlap: {elapsed:.3f}s"
 
 
-def test_event_loop_not_blocked_during_parse(amazon, monkeypatch):
+def test_event_loop_not_blocked_during_parse(amazon):
     """A large parse must not stall other coroutines, proving parsing is off-loop."""
     big = SEARCH_PAGE_HTML.replace(
         "</body></html>", SEARCH_PAGE_HTML.split("<body>")[1].split("</body>")[0] * 40
     )
-    _patch_async_get(monkeypatch, text=big)
+    _patch_async_get(amazon, text=big)
 
     ticks = 0
     running = True
@@ -116,3 +112,24 @@ def test_event_loop_not_blocked_during_parse(amazon, monkeypatch):
     results = asyncio.run(run())
     assert len(results) == 4
     assert ticks > 0, "event loop was blocked during parsing"
+
+
+def test_repeated_asyncio_run_calls_are_safe(amazon):
+    """The async session is per-loop; a second asyncio.run must still work."""
+    _patch_async_get(amazon)
+
+    first = asyncio.run(amazon.async_search("item1"))
+    second = asyncio.run(amazon.async_search("item2"))
+    assert len(first.products) == 2
+    assert len(second.products) == 2
+
+
+def test_async_context_manager_closes(amazon):
+    _patch_async_get(amazon)
+
+    async def run():
+        async with amazon as client:
+            await client.async_search("thinkpad")
+        assert amazon.transport._async_sessions == {}
+
+    asyncio.run(run())

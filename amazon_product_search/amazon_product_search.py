@@ -4,14 +4,13 @@ from __future__ import annotations
 import asyncio
 import logging
 
-import httpx
-import requests
 from urllib.parse import ParseResult, urlencode, urlparse, urlunparse
 
 from .config import MAX_WORKERS, __version__
 from .extractors import extract_data
 from .models import AmazonProduct, AmazonResult, PriceResult, ReviewResult
 from .parsers import parse_html, parse_pagination
+from .transport import Transport, TransportError
 
 __all__ = [
     "Amazon",
@@ -19,27 +18,40 @@ __all__ = [
     "AmazonResult",
     "PriceResult",
     "ReviewResult",
+    "TransportError",
     "__version__",
 ]
 
 
 class Amazon:
-    def __init__(self, is_debuging: bool = False, workers: int | None = None):
+    def __init__(
+        self,
+        is_debuging: bool = False,
+        workers: int | None = None,
+        timeout: int = 20,
+        max_attempts: int = 4,
+        backoff: float = 0.4,
+    ):
         self.base_url: ParseResult = urlparse("https://www.amazon.com/s")
         self.workers = workers if workers is not None else MAX_WORKERS
-        self._HEADER: dict = {
-            "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
-            "Accept-Language": "en-US, en;q=0.5",
-        }
         self.is_debuging = is_debuging
         self.logger = logging.getLogger(__name__)
         self.logger.setLevel(logging.DEBUG if is_debuging else logging.ERROR)
-        self.session = requests.Session()
-        self.session.headers.update(self._HEADER)
+        self.transport = Transport(
+            timeout=timeout,
+            max_attempts=max_attempts,
+            backoff=backoff,
+            debug=is_debuging,
+        )
+
+    @property
+    def session(self):
+        """The underlying curl_cffi Session (created on first use)."""
+        return self.transport._get_session()
 
     def close(self) -> None:
-        """Close underlying requests Session."""
-        self.session.close()
+        """Close the underlying HTTP session."""
+        self.transport.close()
 
     def __enter__(self) -> "Amazon":
         return self
@@ -51,7 +63,7 @@ class Amazon:
         return self
 
     async def __aexit__(self, *_exc) -> None:
-        self.close()
+        await self.transport.aclose()
 
     def __build_url(
         self,
@@ -177,7 +189,10 @@ class Amazon:
 
     def __amazon_request(self, url: str) -> str:
         """
-        Sends an HTTP GET request to the specified Amazon URL.
+        Fetches an Amazon URL through the impersonating transport.
+
+        Retries with a rotated browser fingerprint when Amazon serves a bot
+        challenge instead of results.
 
         Args:
             url (str): The URL to request.
@@ -186,22 +201,14 @@ class Amazon:
             str: The response content text if successful, empty string otherwise.
         """
         try:
-            response = self.session.get(url, timeout=10)
-            if response.status_code != 200:
-                self.logger.error(
-                    f"Error while geting {url}:\t{response.content}"
-                )
-                return ""
-            return response.text
-        except requests.RequestException as error:
-            self.logger.error(
-                f"Error while fetching amazon url[{url}]\nError:{error}"
-            )
+            return self.transport.get(url)
+        except TransportError as error:
+            self.logger.error(f"Error while fetching amazon url[{url}]\nError:{error}")
             return ""
 
     async def __async_request(self, url: str) -> str:
         """
-        Sends an asynchronous HTTP GET request to the specified Amazon URL.
+        Asynchronous twin of :meth:`__amazon_request`.
 
         Args:
             url (str): The URL to request.
@@ -210,20 +217,9 @@ class Amazon:
             str: The response content text if successful, empty string otherwise.
         """
         try:
-            async with httpx.AsyncClient(
-                headers=self._HEADER, timeout=10, follow_redirects=True
-            ) as client:
-                response = await client.get(url)
-            if response.status_code != 200:
-                self.logger.error(
-                    f"Error while geting {url}:\t{response.content}"
-                )
-                return ""
-            return response.text
-        except httpx.HTTPError as error:
-            self.logger.error(
-                f"Error while fetching amazon url[{url}]\nError:{error}"
-            )
+            return await self.transport.aget(url)
+        except TransportError as error:
+            self.logger.error(f"Error while fetching amazon url[{url}]\nError:{error}")
             return ""
 
     def __process_html(self, html: str) -> list[AmazonProduct]:
@@ -252,6 +248,6 @@ class Amazon:
 if __name__ == "__main__":
     import json
 
-    amazon = Amazon(is_debuging=True)
-    result = amazon.search("thinkpad", productType="electronics", page=1)
-    print(json.dumps(result.to_dict(), indent=2))
+    with Amazon(is_debuging=True) as amazon:
+        result = amazon.search("thinkpad", productType="electronics", page=1)
+    print(json.dumps(result.get(), indent=2))

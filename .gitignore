@@ -18,3 +18,11 @@ dist/
 
 # uv tooling residue (not part of the project)
 uv.lock
+
+# coverage
+.coverage
+.coverage.*
+htmlcov/
+
+# scratch
+tmp.py

@@ -4,16 +4,21 @@
 
 - Framework: **pytest** (+ **coverage** for gates). Install: `pip install -e ".[test]"`.
 - Parsers and extractors are imported directly: `from amazon_product_search.parsers import parse_pagination`.
+- Transport is imported directly: `from amazon_product_search.transport import Transport, is_blocked`.
 - The `amazon` fixture in `tests/conftest.py` yields `Amazon(workers=2)` and closes it.
+- **No test touches the network.** `Transport` takes `session=` and
+  `async_session_factory=` seams precisely so retry/backoff logic is testable
+  with scripted doubles; `tests/test_transport.py` reuses those rather than
+  monkeypatching private methods.
 
 ## Commands
 
 ```bash
-pytest tests/ -q -m "not live"          # default: offline suite (43 tests)
+pytest tests/ -q -m "not live"          # default: offline suite (87 tests)
 pytest tests/ -q                        # same — live test self-skips without AMZN_LIVE=1
 AMZN_LIVE=1 pytest tests/test_live.py -q -m live   # opt-in live smoke (hits amazon.com)
 coverage run -m pytest tests/ -q -m "not live"
-coverage report --include="amazon_product_search/*"   # gate: --fail-under=85 (currently ~97%)
+coverage report --include="amazon_product_search/*"   # gate: --fail-under=85 (currently ~93%)
 ```
 
 CI (`.github/workflows/test.yml`) runs the offline suite + coverage gate on
@@ -24,13 +29,14 @@ Python 3.9 and 3.12 for every push/PR.
 | File | Covers |
 |---|---|
 | `test_url_building.py` | `search()` validation, `page` normalisation, filter encoding, mocked end-to-end pagination |
-| `test_request.py` | `__amazon_request` (200 / non-200 / exception), session headers, `close()` + context manager |
+| `test_request.py` | `__amazon_request` (success / `TransportError` / logging), session reuse, `close()` + context manager, client→transport settings |
+| `test_transport.py` | `is_blocked` for every marker, retry-on-block, `200` interstitial treated as blocked, profile rotation + backoff growth, `max_attempts` cap, async twin, per-loop async session isolation, `aclose()` |
 | `test_parse_html.py` — folded into `test_extractors.py` | `SoupStrainer` scoping |
 | `test_pagination.py` | selected/total/ellipsis/missing-widget/regex/exception paths |
 | `test_extractors.py` | all six field extractors, `extract_data` (incl. `None`/`0` defaults, `K`-suffix counts, comma prices, garbage-price no-crash), `convert_review_to_number` (`K`/`M`/`B`/empty/garbage), `split_currency_amount`, `__process_html` |
 | `test_models.py` | `AmazonProduct`/`AmazonResult` contracts |
 | `test_config.py` | `MAX_WORKERS` int, `workers=` override, debug log level |
-| `test_live.py` (`@pytest.mark.live`) | opt-in real-Amazon smoke; caution: rate-limit/ToS risk — never run in CI |
+| `test_live.py` (`@pytest.mark.live`) | opt-in real-Amazon smoke: sync search, async search, repeated searches. **The regression guard for the Amazon 503 block** — each asserts real products are parsed. Caution: rate-limit/ToS risk — never run in CI |
 
 ## Fixture policy
 
