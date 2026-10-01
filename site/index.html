@@ -39,7 +39,7 @@
 
 <header>
   <h1>🛍️ amazon-product-search-v2</h1>
-  <p>Search Amazon products from Python — no PA API key needed. Powered by <code>requests</code> + <code>BeautifulSoup4</code>.</p>
+  <p>Search Amazon products from Python — no PA API key needed. Powered by <code>curl_cffi</code> browser impersonation + <code>BeautifulSoup4</code>.</p>
   <p>Install: <code>pip install amazon-product-search-v2</code> &nbsp;·&nbsp; Import: <code>from amazon_product_search import Amazon</code></p>
 </header>
 
@@ -64,7 +64,7 @@
 <pre><code class="language-shell">git clone --depth 1 https://github.com/ManojPanda3/amazon-product-search
 cd amazon-product-search
 pip install -e ".[test]"   # editable + test extras (pytest, coverage)</code></pre>
-<p>Requirements: Python 3.7+, <code>beautifulsoup4&gt;=4.11</code>, <code>requests&gt;=2.28</code>, <code>lxml&gt;=4.9</code>.</p>
+<p>Requirements: Python 3.9+, <code>beautifulsoup4&gt;=4.11</code>, <code>curl_cffi&gt;=0.13</code>, <code>lxml&gt;=4.9</code>.</p>
 
 <h2 id="quickstart">Quickstart</h2>
 <pre><code class="language-python">from amazon_product_search import Amazon
@@ -147,20 +147,35 @@ amazon.close()</code></pre>
 <table>
   <tr><th>Error</th><th>Cause / fix</th></tr>
   <tr><td><code>ValueError: Error product Name is required</code></td><td>Pass a non-blank <code>productName</code>.</td></tr>
-  <tr><td><code>ValueError: Error while geting data from Amazon</code></td><td>Network failure or Amazon blocked the request. Retry with <code>Amazon(is_debuging=True)</code> for logs, add delays/proxies for bulk scraping.</td></tr>
+  <tr><td><code>ValueError: Error while geting data from Amazon</code></td><td>Every attempt was blocked or errored. See <a href="#anti-bot">Anti-bot</a> — retry with <code>Amazon(is_debuging=True)</code> for per-attempt logs, or widen the rotation with <code>Amazon(max_attempts=6)</code>.</td></tr>
   <tr><td>Empty <code>products</code></td><td>No match, or Amazon changed markup — check <code>total_pages</code>, try another <code>page</code>.</td></tr>
 </table>
 
 <h2 id="tuning">Session &amp; performance</h2>
-<pre><code class="language-python"># Reuse one instance: the requests.Session stays alive (no TLS handshake per search).
-# workers controls the ThreadPoolExecutor fan-out (default: cpu_count() // 2).
+<pre><code class="language-python"># Reuse one instance: the HTTP session stays alive (no TLS handshake per search).
+# workers is accepted for backward compatibility; extraction is serial.
 amazon = Amazon(is_debuging=False, workers=4)
 ...
 amazon.close()  # or: with Amazon() as amazon: ...</code></pre>
 
+<h2 id="anti-bot">Anti-bot transport 🛡️</h2>
+<p>Amazon blocks scrapers on the <strong>TLS/HTTP2 fingerprint</strong>, not just headers. A plain
+<code>requests</code>/<code>httpx</code> call gets a <code>503</code> "Sorry! Something went wrong!" page —
+or a <code>200</code> interstitial carrying <code>bm-verify</code> — that parses to zero products.
+This library impersonates a real browser via <code>curl_cffi</code>, then:</p>
+<ul>
+  <li>detects challenge pages by <strong>body markers, not just status code</strong>;</li>
+  <li><strong>rotates browser fingerprints</strong> across attempts with exponential backoff (blocks follow the fingerprint, not the URL);</li>
+  <li>sends <strong>no hand-written <code>User-Agent</code></strong> — one that disagrees with the TLS fingerprint is itself a signal.</li>
+</ul>
+<pre><code class="language-python"># Tune the retry: timeout (s, 20+ for slow links — pages are ~1 MB),
+# attempts (capped at the 6 profiles), backoff base (s)
+amazon = Amazon(timeout=20, max_attempts=4, backoff=0.4)</code></pre>
+<p>Still blocked? No fingerprint trick makes bulk scraping immune — add delays and proxies.</p>
+
 <h2 id="notes">Important notes</h2>
 <ul>
-  <li><strong>Rate limiting:</strong> Amazon may block frequent requests — add delays/proxies for bulk scraping.</li>
+  <li><strong>Rate limiting:</strong> heavy concurrent scraping can still get you blocked — add delays/proxies for bulk scraping.</li>
   <li><strong>ToS:</strong> scraping may violate Amazon's ToS — personal/educational use only.</li>
   <li><strong>Site changes:</strong> if Amazon changes markup, selectors are documented in <code>docs/SELECTORS.md</code> with an update checklist.</li>
 </ul>

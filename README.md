@@ -2,7 +2,7 @@
 
 ## Overview
 
-Tired of manually browsing Amazon for the best deals? 🌐 Meet **Amazon Product Search** — your trusty Python library to scrape product details from Amazon's search results with just a few lines of code. Powered by **BeautifulSoup4 (bs4)**, **Requests**, and optional **async** requests for speed, this library helps you efficiently gather product titles, prices, reviews, images, and direct links. 🎉
+Tired of manually browsing Amazon for the best deals? 🌐 Meet **Amazon Product Search** — your trusty Python library to scrape product details from Amazon's search results with just a few lines of code. Powered by **curl_cffi** browser impersonation (so Amazon's bot filter doesn't return a 503 error page) and **BeautifulSoup4 (bs4)** for parsing, with optional **async** requests for speed. 🎉
 
 ### Key Features
 
@@ -10,8 +10,9 @@ Tired of manually browsing Amazon for the best deals? 🌐 Meet **Amazon Product
 - **Detailed Data:** Scrape titles, prices (+currency), reviews (+count), images, and URLs. 🎯
 - **Pagination:** Navigate Amazon pages via `page` param and get `current_page` / `total_pages` from `data-csa-c-content-id="pagination-button"`. 📄
 - **Fast and Efficient:** Session reuse (keep-alive), `SoupStrainer` partial parsing, and optional `async_search()` for overlapping network I/O.
+- **Anti-bot:** Ships `curl_cffi` TLS/HTTP2 browser impersonation with automatic profile rotation and retry, so Amazon's "Sorry! Something went wrong!" 503 page doesn't reach you. 🛡️
 - **Easy-to-use:** Simple API + context-manager + backward-compatible iteration. ✨
-- **Lightweight & Compatible:** Python 3.9–3.14, relaxed deps (`beautifulsoup4>=4.11`, `requests>=2.28`, `lxml>=4.9`, `httpx>=0.27`). No heavy frameworks.
+- **Lightweight & Compatible:** Python 3.9–3.14, relaxed deps (`beautifulsoup4>=4.11`, `curl_cffi>=0.13`, `lxml>=4.9`). No heavy frameworks.
 
 ## Setup 🛠️
 
@@ -181,7 +182,7 @@ for product in res:  # or res.products
 ## How It Works 🔍
 
 1. **URL building:** `urllib.parse.urlencode` safely encodes `k`, `i`, `brand`, `price`, `page`.
-2. **Request:** `requests.Session` reuse (keep-alive, header persistence), 10s timeout, `RequestException` handling, `networkidle` not needed.
+2. **Request:** `curl_cffi` with browser impersonation (real TLS/HTTP2 fingerprint), session reuse (keep-alive), 10s timeout. A blocked attempt is retried under a different browser fingerprint with exponential backoff.
 3. **Parse products:** `SoupStrainer("div", {"data-component-type":"s-search-result"})` + `lxml` — only product divs are parsed.
 4. **Parse pagination:** `SoupStrainer("div", {"data-csa-c-content-id":"pagination-button"})` → reads `span.s-pagination-selected` (current) and max `a/span.s-pagination-item` numeric (total, e.g. `260`).
 5. **Extract:** runs `extract_data` (title/link/review/price/image) per div. Extraction is single-threaded on purpose: parsing holds the GIL, and a thread pool measured slower than a plain loop.
@@ -189,6 +190,7 @@ for product in res:  # or res.products
 
 ## Unreleased (unversioned, in working tree)
 
+- **Anti-bot fix:** `requests`/`httpx` replaced by `curl_cffi` browser impersonation, which is what stops Amazon serving the `503` "Sorry! Something went wrong!" page. Adds block detection by body markers (catches the `200` interstitial challenge), fingerprint rotation with exponential backoff, and a per-loop async session. **Breaking-ish:** transport deps changed (`requests`/`httpx` → `curl_cffi`); public `Amazon` API is unchanged apart from the new optional `timeout`/`max_attempts`/`backoff` args.
 - **Typed fields:** `price` is now `float | None` (commas stripped, `0.0` fallback — never raises) and `review_numbers` is `int | None` (`k`/`m`/`b` suffixes converted, e.g. `"1.2K"` → `1200`; missing count → `0`).
 - **Workers:** default is now `(os.cpu_count() or 4) // 2` instead of fixed `4`.
 - See `docs/ARCHITECTURE.md` and `docs/SELECTORS.md` for the full contract, and `docs/TESTING.md` for the test suite.
@@ -196,21 +198,48 @@ for product in res:  # or res.products
 ## What's New in v0.1.2
 
 - **Pagination:** `Amazon.search(..., page=N)` + `AmazonResult.current_page / total_pages` via `data-csa-c-content-id="pagination-button"`.
-- **Performance:** `requests.Session` keep-alive, `SoupStrainer` partial parsing, early-exit on empty results, cached `find()` in `get_title`.
+- **Performance:** session keep-alive, `SoupStrainer` partial parsing, early-exit on empty results, cached `find()` in `get_title`.
 - **Robustness:** Broader `RequestException` catch, NBSP-safe price split, `image.get("src")` type-safe, `review_numbers` paren-stripping.
-- **Compatibility & Lightweight:** `from __future__ import annotations` for Python 3.7–3.14; deps relaxed to `beautifulsoup4>=4.11`, `requests>=2.28`, `lxml>=4.9` (was pinned `==`).
+- **Compatibility & Lightweight:** `from __future__ import annotations` for Python 3.7–3.14; deps relaxed to `beautifulsoup4>=4.11`, `requests>=2.28`, `lxml>=4.9` (was pinned `==`). *Superseded:* these were later replaced by `curl_cffi` — see Unreleased.*
 - **DX:** `AmazonResult` iterable/len/indexable, `.get()` dict, `Amazon` context manager (`with Amazon() as a:` + `close()`), version bump 0.1.1→0.1.2.
+
+## Anti-bot transport 🛡️
+
+Amazon blocks scrapers on the **TLS/HTTP2 fingerprint**, not just headers. A
+plain `requests`/`httpx` call gets a `503` "Sorry! Something went wrong!" page
+(or a `200` interstitial containing `bm-verify`) that parses to zero products.
+This library uses `curl_cffi` to impersonate a real browser, which is the fix.
+
+On top of impersonation it:
+
+- detects challenge pages by **body markers, not just status code** — the
+  `bm-verify` interstitial arrives as `200`;
+- **rotates browser fingerprints** across attempts (blocks follow the
+  fingerprint, not the URL) with exponential backoff;
+- sends **no hand-written `User-Agent`**, since one that disagrees with the
+  TLS fingerprint is itself a detection signal.
+
+Tunable via the constructor:
+
+```python
+Amazon(timeout=20, max_attempts=4, backoff=0.4)
+```
+
+`max_attempts` is capped at the number of profiles (6). When all attempts fail
+you get `ValueError: Error while geting data from Amazon`; `TransportError` is
+exported if you want to catch the underlying cause.
 
 ## Important Notes ⚠️
 
-- **Rate Limiting:** Amazon may block frequent requests. Add delays / proxies for bulk scraping.
+- **Rate Limiting:** heavy concurrent scraping can still get you blocked, and no
+  fingerprint trick makes that impossible. Add delays / proxies for bulk work.
 - **ToS:** Scraping may violate Amazon ToS — personal/educational use only.
 - **Site Changes:** Selectors (`data-cy="title-recipe"`, `data-component-type="s-product-image"`, etc.) may need updates if Amazon changes markup.
 
 ## Troubleshooting 🛠️
 
 1. `ValueError: Error product Name is required` — provide `productName`.
-2. `ValueError: Error while geting data from Amazon` — network/blocked; try `Amazon(is_debuging=True)` for logs.
+2. `ValueError: Error while geting data from Amazon` — every attempt was blocked or errored. Run with `Amazon(is_debuging=True)` to see which fingerprint was rejected per attempt, then try `Amazon(max_attempts=6)` for a wider rotation.
 3. Empty `products` — no match or HTML changed; check pagination (`total_pages`) and try different `page`.
 4. `None` fields — normal (Amazon varies per product).
 5. `ModuleNotFoundError: No module named 'amazon_product_search'` — `pip install amazon-product-search-v2` in correct venv.

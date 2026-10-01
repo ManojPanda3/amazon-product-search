@@ -3,7 +3,12 @@ from setuptools import setup, find_packages
 
 
 def read_requirements():
-    return ["beautifulsoup4>=4.11.0", "requests>=2.28.0", "lxml>=4.9.0"]
+    with open("requirements.txt", "r", encoding="utf-8") as f:
+        return [
+            line.strip()
+            for line in f
+            if line.strip() and not line.startswith("#")
+        ]
 
 
 def read_long_description():
