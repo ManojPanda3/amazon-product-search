@@ -1,3 +1,6 @@
+"""Amazon search client: request, search orchestration, result parsing."""
+from __future__ import annotations
+
 import asyncio
 import logging
 

@@ -1,5 +1,7 @@
 """Library-wide configuration: version string and default worker count."""
 
+from __future__ import annotations
+
 import os
 
 __version__ = "0.1.2"
