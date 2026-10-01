@@ -11,16 +11,16 @@ here. Each row: logical field → anchor → missing-markup behaviour.
 | `title` | `div[data-cy="title-recipe"] > h2 > span` (`.string`) | `None` |
 | `link` | `span[data-component-type="s-product-image"] > a[href]` → `https://www.amazon.com{href}` | `None` |
 | `review` | `div[data-cy="reviews-block"] span.a-size-small.a-color-base[aria-hidden="true"]` (`.string`) | key absent → `None` (`.get("review")` default); no block → `None` (untouched) |
-| `review_numbers` | `div[data-cy="reviews-block"] span[data-component-type="s-client-side-analytics"] > span[aria-hidden="true"]`; strip commas, strip one surrounding paren pair (`"(1,234)"` → `"1234"`), then `__convert_review_to_number` → `int` (`"1.2K"` → `1200`, `k`/`m`/`b`, case-insensitive) | missing/empty (block present) → `0`; no block → `None` (untouched) |
+| `review_numbers` | `div[data-cy="reviews-block"] span[data-component-type="s-client-side-analytics"] > span[aria-hidden="true"]`; strip commas, strip one surrounding paren pair (`"(1,234)"` → `"1234"`), then `convert_review_to_number` → `int` (`"1.2K"` → `1200`, `k`/`m`/`b`, case-insensitive) | missing/empty (block present) → `0`; no block → `None` (untouched) |
 | `price` / `currency` | tried in order: `div[data-cy="price-recipe"] span.a-offscreen`, then `div[data-cy="secondary-offer-recipe"] span.a-color-base`; commas stripped; NBSP split classified per-side by `float()` (`"$"` + `"19.99"` → `currency="$"`, `price=19.99`); no-NBSP text → `float()` with `currency=""`; anything non-numeric → `price=0.0` (never raises) | `None` (whole dict) when no price node |
 | `image` | `img.s-image[src]` | `None` |
 
 Notes:
 
-- `.string` is `None` when a span has nested markup; `__get_price` falls
+- `.string` is `None` when a span has nested markup; `get_price` falls
   back to `get_text(strip=True)` in that case (see `ARCHITECTURE.md`).
 - `review_numbers` paren-stripping assumes at most one surrounding pair;
-  a bare `"5"` converts to int `5` via `__convert_review_to_number`.
+  a bare `"5"` converts to int `5` via `convert_review_to_number`.
 
 ## Pagination (`div[data-csa-c-content-id="pagination-button"]` scope)
 

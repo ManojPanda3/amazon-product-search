@@ -4,44 +4,55 @@ from __future__ import annotations
 
 from bs4 import BeautifulSoup
 
+from amazon_product_search.extractors import (
+    convert_review_to_number,
+    extract_data,
+    get_image,
+    get_link,
+    get_price,
+    get_reviews,
+    get_title,
+    split_currency_amount,
+)
+from amazon_product_search.parsers import parse_html
 from tests.conftest import NBSP, full_product_div, make_tag
 
 
 def test_get_title_ok_and_missing(amazon):
-    assert amazon._Amazon__get_title(full_product_div(title="Hello")) == "Hello"
+    assert get_title(full_product_div(title="Hello")) == "Hello"
     empty = make_tag('<div data-component-type="s-search-result"></div>')
-    assert amazon._Amazon__get_title(empty) is None
+    assert get_title(empty) is None
     no_h2 = make_tag(
         '<div data-component-type="s-search-result">'
         '<div data-cy="title-recipe"><p>no h2</p></div></div>'
     )
-    assert amazon._Amazon__get_title(no_h2) is None
+    assert get_title(no_h2) is None
 
 
 def test_get_link_ok_and_missing(amazon):
     assert (
-        amazon._Amazon__get_link(full_product_div(href="/dp/X1"))
+        get_link(full_product_div(href="/dp/X1"))
         == "https://www.amazon.com/dp/X1"
     )
-    assert amazon._Amazon__get_link(full_product_div(href=None)) is None
-    assert amazon._Amazon__extract_data(None) is None
+    assert get_link(full_product_div(href=None)) is None
+    assert extract_data(None) is None
 
 
 def test_get_reviews_full_and_variants(amazon):
     # __get_reviews converts counts to int itself (k/m/b via converter).
-    r = amazon._Amazon__get_reviews(full_product_div())
+    r = get_reviews(full_product_div())
     assert r["review"] == "4.5 out of 5 stars"
     assert r["reviews_number"] == 1234  # parens stripped, comma removed, int
 
-    r2 = amazon._Amazon__get_reviews(full_product_div(review=None, count="(5)"))
+    r2 = get_reviews(full_product_div(review=None, count="(5)"))
     assert "review" not in r2
     assert r2["reviews_number"] == 5
 
-    r3 = amazon._Amazon__get_reviews(full_product_div(review=None, count=None))
+    r3 = get_reviews(full_product_div(review=None, count=None))
     assert r3 is None  # no reviews-block at all
 
     no_block = make_tag('<div data-component-type="s-search-result"></div>')
-    assert amazon._Amazon__get_reviews(no_block) is None
+    assert get_reviews(no_block) is None
 
 
 def test_get_reviews_number_missing_inner(amazon):
@@ -53,7 +64,7 @@ def test_get_reviews_number_missing_inner(amazon):
         '<span data-component-type="s-client-side-analytics"></span>'
         "</div></div>"
     )
-    r = amazon._Amazon__get_reviews(div)
+    r = get_reviews(div)
     assert r["review"] == "5 stars"
     assert r["reviews_number"] == 0
 
@@ -64,13 +75,13 @@ def test_get_reviews_number_missing_inner(amazon):
         '<span class="a-size-small a-color-base" aria-hidden="true">5 stars</span>'
         "</div></div>"
     )
-    assert amazon._Amazon__get_reviews(div2)["reviews_number"] == 0
+    assert get_reviews(div2)["reviews_number"] == 0
 
 
 def test_get_price_primary_nbsp_and_fallback(amazon):
     # __get_price returns float amounts; decimals must parse as amounts
     # (regression: str.isnumeric() rejects "999.00" — must use float()).
-    p = amazon._Amazon__get_price(full_product_div())
+    p = get_price(full_product_div())
     assert p == {"currency": "$", "price": 999.0}
 
     no_nbsp = make_tag(
@@ -78,13 +89,13 @@ def test_get_price_primary_nbsp_and_fallback(amazon):
         '<div data-cy="price-recipe"><span class="a-offscreen">$19.99</span></div></div>'
     )
     # No NBSP separator: "$19.99" can't split currency/amount -> 0.0, no crash.
-    assert amazon._Amazon__get_price(no_nbsp) == {"currency": "", "price": 0.0}
+    assert get_price(no_nbsp) == {"currency": "", "price": 0.0}
 
     bare_numeric = make_tag(
         '<div data-component-type="s-search-result">'
         '<div data-cy="price-recipe"><span class="a-offscreen">19.99</span></div></div>'
     )
-    assert amazon._Amazon__get_price(bare_numeric) == {"currency": "", "price": 19.99}
+    assert get_price(bare_numeric) == {"currency": "", "price": 19.99}
 
     secondary = make_tag(
         '<div data-component-type="s-search-result">'
@@ -93,20 +104,20 @@ def test_get_price_primary_nbsp_and_fallback(amazon):
         + ("Rs" + NBSP + "499")
         + "</span></div></div>"
     )
-    assert amazon._Amazon__get_price(secondary) == {"currency": "Rs", "price": 499.0}
+    assert get_price(secondary) == {"currency": "Rs", "price": 499.0}
 
     garbage = make_tag(
         '<div data-component-type="s-search-result">'
         '<div data-cy="price-recipe"><span class="a-offscreen">Free</span></div></div>'
     )
-    assert amazon._Amazon__get_price(garbage) == {"currency": "", "price": 0.0}
+    assert get_price(garbage) == {"currency": "", "price": 0.0}
 
     empty = make_tag('<div data-component-type="s-search-result"></div>')
-    assert amazon._Amazon__get_price(empty) is None
+    assert get_price(empty) is None
 
 
 def test_split_currency_amount(amazon):
-    split = amazon._Amazon__split_currency_amount
+    split = split_currency_amount
     assert split("$", "19.99") == ("$", 19.99)
     assert split("19.99", "$") == ("$", 19.99)
     assert split("10", "20") == ("", 20.0)
@@ -121,26 +132,26 @@ def test_get_price_secondary_nested_text(amazon):
         '<div data-cy="secondary-offer-recipe">'
         '<span class="a-color-base"><b>Rs</b><i>499</i></span></div></div>'
     )
-    assert amazon._Amazon__get_price(div) == {"currency": "", "price": 0.0}
+    assert get_price(div) == {"currency": "", "price": 0.0}
 
     div2 = make_tag(
         '<div data-component-type="s-search-result">'
         '<div data-cy="secondary-offer-recipe">'
         '<span class="a-color-base"><b>Rs' + NBSP + "499</b><i></i></span></div></div>"
     )
-    assert amazon._Amazon__get_price(div2) == {"currency": "Rs", "price": 499.0}
+    assert get_price(div2) == {"currency": "Rs", "price": 499.0}
 
 
 def test_get_image_ok_and_missing(amazon):
     assert (
-        amazon._Amazon__get_image(full_product_div(img="https://i.test/a.jpg"))
+        get_image(full_product_div(img="https://i.test/a.jpg"))
         == "https://i.test/a.jpg"
     )
-    assert amazon._Amazon__get_image(full_product_div(img=None, href="/dp/A")) is None
+    assert get_image(full_product_div(img=None, href="/dp/A")) is None
 
 
 def test_extract_data_combines_fields(amazon):
-    prod = amazon._Amazon__extract_data(full_product_div())
+    prod = extract_data(full_product_div())
     assert prod.title == "ThinkPad X1"
     assert prod.link == "https://www.amazon.com/dp/B0TEST123"
     assert prod.review == "4.5 out of 5 stars"
@@ -164,7 +175,7 @@ def test_extract_data_combines_fields(amazon):
 
 def test_extract_data_missing_review_defaults(amazon):
     # No reviews-block at all -> review dict None -> fields untouched (None).
-    prod = amazon._Amazon__extract_data(full_product_div(review=None, count=None))
+    prod = extract_data(full_product_div(review=None, count=None))
     assert prod.review is None
     assert prod.review_numbers is None
 
@@ -177,13 +188,13 @@ def test_extract_data_missing_review_defaults(amazon):
         '<span aria-hidden="true">(10)</span></span>'
         "</div></div>"
     )
-    prod2 = amazon._Amazon__extract_data(div)
+    prod2 = extract_data(div)
     assert prod2.review is None
     assert prod2.review_numbers == 10
 
 
 def test_extract_data_review_suffix_and_comma_price(amazon):
-    prod = amazon._Amazon__extract_data(
+    prod = extract_data(
         full_product_div(count="(1.2K)", price="$" + NBSP + "1,999.00")
     )
     assert prod.review_numbers == 1200
@@ -197,7 +208,7 @@ def test_extract_data_garbage_price_never_crashes(amazon):
         '<div data-cy="title-recipe"><h2><span>G</span></h2></div>'
         '<div data-cy="price-recipe"><span class="a-offscreen">$19.99</span></div></div>'
     )
-    prod = amazon._Amazon__extract_data(div)
+    prod = extract_data(div)
     assert prod.price == 0.0
     assert prod.currency == ""
 
@@ -207,12 +218,12 @@ def test_extract_data_garbage_price_never_crashes(amazon):
         '<div data-cy="secondary-offer-recipe">'
         '<span class="a-color-base"><b>Rs</b><i>499</i></span></div></div>'
     )
-    prod2 = amazon._Amazon__extract_data(nested)
+    prod2 = extract_data(nested)
     assert prod2.price == 0.0
 
 
 def test_convert_review_to_number(amazon):
-    conv = amazon._Amazon__convert_review_to_number
+    conv = convert_review_to_number
     assert conv("1234") == 1234
     assert conv("0") == 0
     assert conv("") == 0
@@ -232,7 +243,7 @@ def test_parse_html_finds_only_product_divs(amazon):
         '<div class="noise"><span>C</span></div>'
         "</body></html>"
     )
-    divs = amazon._Amazon__parse_html(html)
+    divs = parse_html(html)
     assert len(divs) == 2
 
 
