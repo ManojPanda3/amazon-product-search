@@ -158,7 +158,7 @@ for product in res:  # or res.products
 2. **Request:** `requests.Session` reuse (keep-alive, header persistence), 10s timeout, `RequestException` handling, `networkidle` not needed.
 3. **Parse products:** `SoupStrainer("div", {"data-component-type":"s-search-result"})` + `lxml` — only product divs are parsed.
 4. **Parse pagination:** `SoupStrainer("div", {"data-csa-c-content-id":"pagination-button"})` → reads `span.s-pagination-selected` (current) and max `a/span.s-pagination-item` numeric (total, e.g. `260`).
-5. **Extract:** `ThreadPoolExecutor(max_workers=workers)` (`workers` defaults to `(os.cpu_count() or 4) // 2`) concurrently runs `__extract_data` (title/link/review/price/image).
+5. **Extract:** `ThreadPoolExecutor(max_workers=workers)` (`workers` defaults to `(os.cpu_count() or 4) // 2`) concurrently runs `extract_data` (title/link/review/price/image).
 6. **Return:** `AmazonResult(products, current_page, total_pages)`.
 
 ## Unreleased (unversioned, in working tree)
@@ -170,7 +170,7 @@ for product in res:  # or res.products
 ## What's New in v0.1.2
 
 - **Pagination:** `Amazon.search(..., page=N)` + `AmazonResult.current_page / total_pages` via `data-csa-c-content-id="pagination-button"`.
-- **Performance:** `requests.Session` keep-alive, `SoupStrainer` partial parsing, early-exit on empty results, cached `find()` in `__get_title`.
+- **Performance:** `requests.Session` keep-alive, `SoupStrainer` partial parsing, early-exit on empty results, cached `find()` in `get_title`.
 - **Robustness:** Broader `RequestException` catch, NBSP-safe price split, `image.get("src")` type-safe, `review_numbers` paren-stripping.
 - **Compatibility & Lightweight:** `from __future__ import annotations` for Python 3.7–3.14; deps relaxed to `beautifulsoup4>=4.11`, `requests>=2.28`, `lxml>=4.9` (was pinned `==`).
 - **DX:** `AmazonResult` iterable/len/indexable, `.get()` dict, `Amazon` context manager (`with Amazon() as a:` + `close()`), version bump 0.1.1→0.1.2.
