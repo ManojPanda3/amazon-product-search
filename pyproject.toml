@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "amazon_product_search_v2"
-version = "0.1.2"
+version = "0.1.3"
 description = "A library to search products on Amazon without using the PA API"
 readme = "README.md"
 authors = [

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import os
 
-__version__ = "0.1.2"
+__version__ = "0.1.3"
 
 MAX_WORKERS = max(1, (os.cpu_count() or 4) // 2)  # Retained for backward compatibility: extraction is now serial, since parsing holds the GIL.
 

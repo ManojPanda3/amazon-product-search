@@ -18,7 +18,7 @@ def read_long_description():
 
 setup(
     name="amazon_product_search_v2",  # This is the name used for `pip install`
-    version="0.1.2",  # Use semantic versioning (major.minor.patch)
+    version="0.1.3",  # Use semantic versioning (major.minor.patch)
     packages=find_packages(exclude=["tests*"]),
     description="A library to search products on Amazon without using the PA API",
     long_description=read_long_description(),

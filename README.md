@@ -300,12 +300,13 @@ product-detail document separately:
 Unlike `search()`, `deep_scrape()` makes a **single direct request** and does
 not go through `Transport`'s fingerprint rotation/retry loop.
 
-## Unreleased (unversioned, in working tree)
+## What's New in v0.1.3
 
+- **Deep scrape:** `AmazonProduct.deep_scrape()` now returns an exported `AmazonProductDetails` with a generalized detail-page schema (identity, offer, social proof, features/specs, media, variations). Missing sections stay `None` / `[]` / `{}`; saved HTML and local files are supported through `html=` or a file path in `link`.
 - **Anti-bot fix:** `requests`/`httpx` replaced by `curl_cffi` browser impersonation, which is what stops Amazon serving the `503` "Sorry! Something went wrong!" page. Adds block detection by body markers (catches the `200` interstitial challenge), fingerprint rotation with exponential backoff, and a per-loop async session. **Breaking-ish:** transport deps changed (`requests`/`httpx` → `curl_cffi`); public `Amazon` API is unchanged apart from the new optional `timeout`/`max_attempts`/`backoff` args.
 - **Typed fields:** `price` is now `float | None` (commas stripped, `0.0` fallback — never raises) and `review_numbers` is `int | None` (`k`/`m`/`b` suffixes converted, e.g. `"1.2K"` → `1200`; missing count → `0`).
-- **Deep scrape:** `AmazonProduct.deep_scrape()` now returns an exported `AmazonProductDetails` with a generalized detail-page schema (identity, offer, social proof, features/specs, media, variations). Missing sections stay `None` / `[]` / `{}`; saved HTML and local files are supported through `html=` or a file path in `link`.
 - **Workers:** default is now `(os.cpu_count() or 4) // 2` instead of fixed `4`.
+- **Version:** 0.1.2 → 0.1.3.
 - See `docs/ARCHITECTURE.md` and `docs/SELECTORS.md` for the full contract, and `docs/TESTING.md` for the test suite.
 
 ## What's New in v0.1.2
@@ -313,7 +314,7 @@ not go through `Transport`'s fingerprint rotation/retry loop.
 - **Pagination:** `Amazon.search(..., page=N)` + `AmazonResult.current_page / total_pages` via `data-csa-c-content-id="pagination-button"`.
 - **Performance:** session keep-alive, `SoupStrainer` partial parsing, early-exit on empty results, cached `find()` in `get_title`.
 - **Robustness:** Broader `RequestException` catch, NBSP-safe price split, `image.get("src")` type-safe, `review_numbers` paren-stripping.
-- **Compatibility & Lightweight:** `from __future__ import annotations` for Python 3.7–3.14; deps relaxed to `beautifulsoup4>=4.11`, `requests>=2.28`, `lxml>=4.9` (was pinned `==`). *Superseded:* these were later replaced by `curl_cffi` — see Unreleased.*
+- **Compatibility & Lightweight:** `from __future__ import annotations` for Python 3.7–3.14; deps relaxed to `beautifulsoup4>=4.11`, `requests>=2.28`, `lxml>=4.9` (was pinned `==`). *Superseded:* these were later replaced by `curl_cffi` — see v0.1.3.*
 - **DX:** `AmazonResult` iterable/len/indexable, `.get()` dict, `Amazon` context manager (`with Amazon() as a:` + `close()`), version bump 0.1.1→0.1.2.
 
 ## Anti-bot transport 🛡️
