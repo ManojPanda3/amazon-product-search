@@ -14,11 +14,11 @@
 ## Commands
 
 ```bash
-pytest tests/ -q -m "not live"          # default: offline suite (87 tests)
+pytest tests/ -q -m "not live"          # default: offline suite (91 tests)
 pytest tests/ -q                        # same — live test self-skips without AMZN_LIVE=1
 AMZN_LIVE=1 pytest tests/test_live.py -q -m live   # opt-in live smoke (hits amazon.com)
 coverage run -m pytest tests/ -q -m "not live"
-coverage report --include="amazon_product_search/*"   # gate: --fail-under=85 (currently ~93%)
+coverage report --include="amazon_product_search/*"   # gate: --fail-under=85 (currently ~87%)
 ```
 
 CI (`.github/workflows/test.yml`) runs the offline suite + coverage gate on
@@ -35,6 +35,7 @@ Python 3.9 and 3.12 for every push/PR.
 | `test_pagination.py` | selected/total/ellipsis/missing-widget/regex/exception paths |
 | `test_extractors.py` | all six field extractors, `extract_data` (incl. `None`/`0` defaults, `K`-suffix counts, comma prices, garbage-price no-crash), `convert_review_to_number` (`K`/`M`/`B`/empty/garbage), `split_currency_amount`, `__process_html` |
 | `test_models.py` | `AmazonProduct`/`AmazonResult` contracts |
+| `test_details.py` | `AmazonProduct.deep_scrape`: full synthetic detail page (identity/offer/social/content/media/variations), fixed schema on empty HTML, local-file source, missing-link error |
 | `test_config.py` | `MAX_WORKERS` int, `workers=` override, debug log level |
 | `test_live.py` (`@pytest.mark.live`) | opt-in real-Amazon smoke: sync search, async search, repeated searches. **The regression guard for the Amazon 503 block** — each asserts real products are parsed. Caution: rate-limit/ToS risk — never run in CI |
 
@@ -43,6 +44,9 @@ Python 3.9 and 3.12 for every push/PR.
 - **Synthetic minimal HTML only** (`tests/conftest.py`: `full_product_div()`,
   `make_tag()`, `PAGINATION_HTML`, `SEARCH_PAGE_HTML`). No committed scraped
   pages (ToS + brittleness). Mirror the anchors in `SELECTORS.md`.
+- Detail-page fixtures are inline in `tests/test_details.py` and passed through
+  `deep_scrape(html=...)`, so the detail tests never touch the network. Local-file
+  resolution is covered with `tmp_path`.
 - NBSP (`\u00a0`) price splitting is built via the `NBSP` constant — never a
   literal invisible character.
 
@@ -55,7 +59,9 @@ Python 3.9 and 3.12 for every push/PR.
 
 ## Adding a regression test (markup change)
 
-1. Add minimal snippet to `tests/conftest.py`.
-2. Add failing test in `test_extractors.py` / `test_pagination.py`.
-3. Fix extractor + update `docs/SELECTORS.md` in the same change.
+1. Add minimal snippet to `tests/conftest.py` (search) or
+   `tests/test_details.py` (detail page).
+2. Add failing test in `test_extractors.py` / `test_pagination.py` /
+   `test_details.py`.
+3. Fix extractor/parser + update `docs/SELECTORS.md` in the same change.
 4. Re-run suite + coverage before pushing.

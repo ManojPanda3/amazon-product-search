@@ -3,6 +3,7 @@
 from .amazon_product_search import (
     Amazon,
     AmazonProduct,
+    AmazonProductDetails,
     AmazonResult,
     PriceResult,
     ReviewResult,
@@ -13,6 +14,7 @@ from .amazon_product_search import (
 __all__ = [
     "Amazon",
     "AmazonProduct",
+    "AmazonProductDetails",
     "AmazonResult",
     "PriceResult",
     "ReviewResult",

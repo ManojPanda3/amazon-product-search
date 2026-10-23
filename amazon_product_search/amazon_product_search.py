@@ -8,13 +8,20 @@ from urllib.parse import ParseResult, urlencode, urlparse, urlunparse
 
 from .config import MAX_WORKERS, __version__
 from .extractors import extract_data
-from .models import AmazonProduct, AmazonResult, PriceResult, ReviewResult
+from .models import (
+    AmazonProduct,
+    AmazonProductDetails,
+    AmazonResult,
+    PriceResult,
+    ReviewResult,
+)
 from .parsers import parse_html, parse_pagination
 from .transport import Transport, TransportError
 
 __all__ = [
     "Amazon",
     "AmazonProduct",
+    "AmazonProductDetails",
     "AmazonResult",
     "PriceResult",
     "ReviewResult",

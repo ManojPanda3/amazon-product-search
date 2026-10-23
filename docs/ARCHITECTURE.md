@@ -5,15 +5,15 @@ Single-package library split across focused modules:
 | Module | Responsibility |
 | --- | --- |
 | `config.py` | `__version__`, `MAX_WORKERS` |
-| `models.py` | `AmazonProduct`, `AmazonResult`, `PriceResult`, `ReviewResult` |
+| `models.py` | `AmazonProduct`, `AmazonProductDetails`, `AmazonResult`, `PriceResult`, `ReviewResult` |
 | `transport.py` | `Transport`: curl_cffi impersonation, block detection, retry/backoff; `is_blocked`, `IMPERSONATE_PROFILES`, `BLOCK_MARKERS` |
 | `parsers.py` | `parse_html` (result divs), `parse_pagination` |
 | `extractors.py` | `get_title`/`get_link`/`get_reviews`/`get_price`/`get_image`, `extract_data`, plus the `convert_review_to_number` and `split_currency_amount` helpers |
-| `amazon_product_search.py` | `Amazon` client: request, `search()` orchestration, `__process_html` thread pool |
+| `amazon_product_search.py` | `Amazon` client: request, `search()` orchestration, serial `extract_data` loop |
 
 Parsers and extractors are pure module-level functions holding no client state, so they import and test directly.
 
-(`Amazon`, `AmazonProduct`, `AmazonResult`, `__version__`).
+(`Amazon`, `AmazonProduct`, `AmazonProductDetails`, `AmazonResult`, `__version__`).
 
 ## Request → parse → extract → return pipeline
 
@@ -45,21 +45,71 @@ Parsers and extractors are pure module-level functions holding no client state, 
 7. **Filter** — `None` results filtered out; products are returned in document order.
 8. **Return** — `AmazonResult(products, current_page, total_pages)`.
 
+## Detail-page scraping (`AmazonProduct.deep_scrape`)
+
+The search path is optimized for many small result divs; a detail page is the
+opposite: one large document with optional sections scattered across it.
+`AmazonProduct.deep_scrape()` parses the full page and projects it onto a fixed
+schema.
+
+1. **Source resolution** — explicit `html=` (saved document) wins. Otherwise a
+   non-HTTP `link` is read from disk when it points at a file; otherwise a
+   single `curl_cffi` GET is made with `impersonate="chrome124"`, a 20s
+   timeout, redirects, and `Accept-Language`. Responses are checked with
+   `raise_for_status()`.
+2. **Base URL** — an HTTP(S) `link` is kept; otherwise the canonical/OG URL is
+   used, falling back to `https://www.amazon.com`, so relative image and
+   variation URLs can be absolutized.
+3. **Section extraction** — identity (`#productTitle`, ASIN inputs, byline,
+   breadcrumbs), offer (price/currency/availability), social proof
+   (`#acrPopover`, review count), content (`#feature-bullets`,
+   `#detailBullets_feature_div`, spec tables), media (`#landingImage`,
+   `colorImages` gallery JSON), and variations
+   (`desktop-twister-sort-filter-data`).
+4. **Projection** — the result is always `AmazonProductDetails` with every key
+   present. Missing markup yields `None` for scalars, `[]` for lists, and `{}`
+   for mappings; parsing never raises on an absent section.
+5. **Return** — `.get()` is an `asdict()` view, directly JSON-serialisable.
+
+`deep_scrape()` deliberately uses a direct one-shot request rather than
+`Transport`: it is a single-page operation, while `Transport` exists to rotate
+fingerprints and retry search requests. If a detail request is blocked, the
+caller gets the HTTP error instead of a retry loop.
+
+### Schema
+
+| Group | Fields | Missing value |
+|---|---|---|
+| Identity | `asin`, `title`, `brand`, `link`, `breadcrumbs` | `None` / `[]` |
+| Offer | `price`, `price_value`, `currency`, `availability` | `None` |
+| Social proof | `rating`, `review_count`, `best_sellers_rank` | `None` / `[]` |
+| Content | `features`, `specifications`, `product_details` | `[]` / `{}` |
+| Media | `main_image`, `images` | `None` / `[]` |
+| Variations | `variations` | `[]` |
+
+`price` is the display string (for example `"$1,299.99"`); `price_value` is the
+parsed float. A page can expose a currency symbol without a buy-box price, so
+`currency` may be set while both price fields are `None`. Each `variations`
+entry carries `dimension`, `value`, `asin`, `selected`, `state`, `available`,
+`price`, `price_value`, `image`, and `url`.
+
 ## Module map
 
 | Symbol | Role |
 |---|---|
 | `AmazonProduct` | Dataclass for one product; `.get()` → JSON-serialisable dict. `review_numbers: int \| None` (converted inside `get_reviews` by `convert_review_to_number`, incl. `k`/`m`/`b` suffixes: `"1.2K"` → `1200`); `price: float \| None` (converted inside `get_price`, commas stripped). Missing review text → `review is None`; missing count (block present) → `0`; no reviews-block → both stay `None`. |
+| `AmazonProductDetails` | Generalized detail-page dataclass returned by `AmazonProduct.deep_scrape()`: identity, offer, social proof, features/specs, media, and variations. Every field is optional but always present (`None` / `[]` / `{}`). |
 | `AmazonResult` | `products` + `current_page` + `total_pages`; iterable/`len()`/indexable proxying `products`; `.get()` for JSON. |
 | `PriceResult` / `ReviewResult` | `TypedDict`s for the `get_price` / `get_reviews` return shapes (`ReviewResult` is `total=False`: `review` may be absent). |
-| `Amazon` | Transport owner (`close()`/`aclose()` + sync/async context managers), URL builder, orchestrator. Network and thread-pool helpers stay private (`_Amazon__amazon_request`, `_Amazon__process_html`). |
+| `Amazon` | Transport owner (`close()`/`aclose()` + sync/async context managers), URL builder, orchestrator. Network and serial-extraction helpers stay private (`_Amazon__amazon_request`, `_Amazon__process_html`). |
 | `Transport` | Sole network boundary — the seam all offline tests stub. Owns curl_cffi sessions (sync + per-loop async), profile rotation, block detection, backoff. Raises `TransportError` when a URL is unrecoverable. |
 | `is_blocked` | `module function`: body → "is this a bot challenge?". Status is checked by the caller, not here. |
 | `__amazon_request` / `__async_request` | Thin adapters: `Transport.get`/`aget` → HTML or `""` (logging `TransportError`). |
 | `parse_html` / `parse_pagination` | HTML → divs / (current, total). Pagination holds most branching logic. |
 | `convert_review_to_number` | `module function`: `"1234"` → `1234`, `"1.2K"` → `1200`, `"3M"` → `3000000`, `"1B"` → `1000000000` (case-insensitive suffix); garbage/empty → `0`. Unit-tested in `test_convert_review_to_number`. |
 | `split_currency_amount` | `module function`: classifies each NBSP side via `float()` (parseable → amount, else currency). |
-| `__process_html` / `extract_data` | Thread fan-out + per-div field aggregation. |
+| `__process_html` / `extract_data` | Serial per-div aggregation into `AmazonProduct` instances. |
+| `_parse_*` (in `models.py`) | Detail-page section parsers: identity, offer, social proof, features/specs, media, variations. Every parser is optional-markup-safe. |
 | `get_title/link/reviews/price/image` | One selector-anchored extractor each; all return `None` on missing markup (never raise on absent fields). |
 
 ## Anti-bot transport
@@ -108,7 +158,7 @@ Choices worth knowing before you change them:
 
 - **Session reuse** is load-bearing for perf (avoids a TLS handshake per
   search). Always go through `Transport`; `Amazon.session` proxies it.
-- **`__process_html` has no per-future error handling, so a raising extractor
+- **`__process_html` has no per-product error handling, so a raising extractor
   would fail the whole search. Guard with `if not div / if not node: return None`.
 - **`get_price` never raises:** amounts parse via `float()` with `0.0`
   fallback; NBSP sides are classified by `split_currency_amount`
@@ -124,3 +174,8 @@ Choices worth knowing before you change them:
 - **`parse_pagination` defensive guards** (`total < current`, `total < 1`)
   are near-unreachable with well-formed markup; `total < 1` is currently
   uncovered by tests (see `TESTING.md`).
+- **Detail-page parsers follow the search-extractor rule:** absent sections
+  return `None` / `[]` / `{}`, never raise. `_clean_text` strips Amazon's
+  invisible direction marks and NBSPs; `price` (display) and `price_value`
+  (float) are intentionally separate. Update `SELECTORS.md` and
+  `tests/test_details.py` when anchors change.
