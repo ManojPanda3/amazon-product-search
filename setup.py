@@ -1,9 +1,16 @@
 # setup.py
+from pathlib import Path
+
 from setuptools import setup, find_packages
 
 
 def read_requirements():
-    with open("requirements.txt", "r", encoding="utf-8") as f:
+    # The sdist may not include requirements.txt; pyproject.toml remains the
+    # authoritative dependency list, so fall back to an empty list.
+    requirements = Path(__file__).resolve().with_name("requirements.txt")
+    if not requirements.exists():
+        return []
+    with requirements.open("r", encoding="utf-8") as f:
         return [
             line.strip()
             for line in f
@@ -12,7 +19,8 @@ def read_requirements():
 
 
 def read_long_description():
-    with open("README.md", "r", encoding="utf-8") as f:
+    readme = Path(__file__).resolve().with_name("README.md")
+    with readme.open("r", encoding="utf-8") as f:
         return f.read()
 
 
